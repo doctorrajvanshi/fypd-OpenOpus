@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local configurations
+.env
+.env.local
+.env.*.local
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# System-level output caches
+outputs/
+bin/
+build/
+dist/
+dist_frontend/
+*.spec
+crash_log.txt
+test_server.log
+test_server_err.log
+
+# Playwright & Social sessions
+tiktok_session/
+client_secrets.json
+
+# Node modules (Frontend & Landing)
+node_modules/
+.eslintcache

@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>fypd | fypd Orchestrator</title>
+    <style>
+        :root {
+            --bg: #0a0a0c;
+            --surface: #16161a;
+            --primary: #ffff00;
+            --text: #e1e1e6;
+            --text-dim: #a1a1aa;
+            --border: #27272a;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        h1 {
+            color: var(--primary);
+            font-size: 2.5rem;
+            letter-spacing: -0.05em;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-dim);
+            font-size: 1.1rem;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--text-dim);
+        }
+
+        input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 1rem;
+            box-sizing: border-box;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        button {
+            width: 100%;
+            padding: 1rem;
+            background: var(--primary);
+            color: #000;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        button:disabled {
+            background: var(--text-dim);
+            cursor: not-allowed;
+        }
+
+        #output {
+            margin-top: 2rem;
+            display: none;
+        }
+
+        pre {
+            background: #000;
+            padding: 1rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.9rem;
+            border: 1px solid var(--border);
+        }
+
+        .status {
+            text-align: center;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            color: var(--primary);
+        }
+
+        .download-btn {
+            background: #22c55e;
+            color: #fff;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>fypd</h1>
+            <p class="subtitle">High-Retention Vertical Video Orchestrator</p>
+        </header>
+
+        <div id="settingsCard" class="card" style="display: none;">
+            <div class="form-group">
+                <label for="apiKey">Gemini API Key (stored locally)</label>
+                <input type="password" id="apiKey" placeholder="Enter your Google Gemini API Key">
+            </div>
+            <div class="form-group">
+                <label for="pexelsKey">Pexels API Key (for B-Roll)</label>
+                <input type="password" id="pexelsKey" placeholder="Enter your Pexels API Key">
+            </div>
+            <hr style="border: 0; border-top: 1px solid var(--border); margin: 1.5rem 0;">
+            <div class="form-group">
+                <label for="igToken">Instagram Access Token</label>
+                <input type="password" id="igToken" placeholder="EAAB...">
+            </div>
+            <div class="form-group">
+                <label for="igUser">Instagram User ID</label>
+                <input type="text" id="igUser" placeholder="1784...">
+            </div>
+            <div class="form-group">
+                <label for="ngrokToken">Ngrok Auth Token (for IG/FB uploads)</label>
+                <input type="password" id="ngrokToken" placeholder="2aB...">
+            </div>
+            <hr style="border: 0; border-top: 1px solid var(--border); margin: 1.5rem 0;">
+            <div class="form-group">
+                <label for="fbToken">Facebook Page Access Token</label>
+                <input type="password" id="fbToken" placeholder="EAAB...">
+            </div>
+            <div class="form-group">
+                <label for="fbPageId">Facebook Page ID</label>
+                <input type="text" id="fbPageId" placeholder="105...">
+            </div>
+            <div class="form-group">
+                <button id="tiktokLoginBtn" style="background: #000; color: #fff; border: 1px solid #333;">🎵 Login to TikTok</button>
+                <p style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.5rem;">Opens a browser window. Log in manually once to save your session.</p>
+            </div>
+            <button id="saveSettingsBtn">Save Settings</button>
+        </div>
+
+        <div class="card" id="mainCard">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <label style="margin: 0; cursor: pointer;">
+                        <input type="checkbox" id="batchToggle" style="width: auto; margin-right: 0.5rem;"> Batch Mode
+                    </label>
+                </div>
+                <button id="toggleSettingsBtn" style="width: auto; padding: 0.5rem 1rem; font-size: 0.8rem; background: var(--surface); color: var(--text-dim); border: 1px solid var(--border);">⚙️ Settings</button>
+            </div>
+
+            <div style="background: var(--bg); padding: 1rem; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 1.5rem; display: flex; gap: 1.5rem; font-size: 0.9rem;">
+                <div style="color: var(--text-dim);">Auto-Publish:</div>
+                <label style="cursor: pointer;"><input type="checkbox" id="pubYoutube" style="width: auto; margin-right: 0.3rem;"> YouTube</label>
+                <label style="cursor: pointer;"><input type="checkbox" id="pubInsta" style="width: auto; margin-right: 0.3rem;"> Instagram</label>
+                <label style="cursor: pointer;"><input type="checkbox" id="pubTiktok" style="width: auto; margin-right: 0.3rem;"> TikTok</label>
+                <label style="cursor: pointer;"><input type="checkbox" id="pubFb" style="width: auto; margin-right: 0.3rem;"> Facebook</label>
+            </div>
+
+            <div class="form-group" id="singleUrlGroup">
+                <label for="videoUrl">YouTube URL</label>
+                <input type="text" id="videoUrl" placeholder="https://www.youtube.com/watch?v=...">
+            </div>
+
+            <div class="form-group" id="batchUrlGroup" style="display: none;">
+                <label for="batchUrls">YouTube URLs (one per line)</label>
+                <textarea id="batchUrls" placeholder="https://youtube.com/watch?v=1&#10;https://youtube.com/watch?v=2" style="width: 100%; height: 120px; padding: 0.75rem 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 1rem; box-sizing: border-box;"></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="styleSelect">Visual Style</label>
+                <select id="styleSelect" style="width: 100%; padding: 0.75rem 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+                    <option value="hormozi">Hormozi (High Impact)</option>
+                    <option value="minimalist">Minimalist (Clean)</option>
+                    <option value="neon">Neon (Glow)</option>
+                </select>
+            </div>
+
+            <button id="generateBtn">Orchestrate Viral Clips</button>
+            <div id="statusMsg" class="status"></div>
+        </div>
+
+        <div id="output" class="card">
+            <h2 style="color: var(--primary); margin-top: 0;">Clip Gallery & Social Lab</h2>
+            <div id="galleryGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.5rem;">
+                <!-- Clips will inject here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API Config
+        const API_BASE = window.location.origin;
+        
+        const apiKeyInput = document.getElementById('apiKey');
+        const videoUrlInput = document.getElementById('videoUrl');
+        const generateBtn = document.getElementById('generateBtn');
+        const outputDiv = document.getElementById('output');
+        const statusMsg = document.getElementById('statusMsg');
+        const settingsCard = document.getElementById('settingsCard');
+        const mainCard = document.getElementById('mainCard');
+        const toggleSettingsBtn = document.getElementById('toggleSettingsBtn');
+        const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+        const galleryGrid = document.getElementById('galleryGrid');
+
+        const batchToggle = document.getElementById('batchToggle');
+        const singleUrlGroup = document.getElementById('singleUrlGroup');
+        const batchUrlGroup = document.getElementById('batchUrlGroup');
+        const batchUrlsInput = document.getElementById('batchUrls');
+
+        batchToggle.addEventListener('change', () => {
+            if (batchToggle.checked) {
+                singleUrlGroup.style.display = 'none';
+                batchUrlGroup.style.display = 'block';
+            } else {
+                singleUrlGroup.style.display = 'block';
+                batchUrlGroup.style.display = 'none';
+            }
+        });
+
+        // Load API Key
+        const savedKey = localStorage.getItem('gemini_api_key');
+        const savedPexelsKey = localStorage.getItem('pexels_api_key');
+        const savedIgToken = localStorage.getItem('ig_access_token');
+        const savedIgUser = localStorage.getItem('ig_user_id');
+        const savedNgrok = localStorage.getItem('ngrok_token');
+        const savedFbToken = localStorage.getItem('fb_access_token');
+        const savedFbPage = localStorage.getItem('fb_page_id');
+        const tiktokLoginBtn = document.getElementById('tiktokLoginBtn');
+
+        if (savedKey) {
+            apiKeyInput.value = savedKey;
+            if (savedPexelsKey) document.getElementById('pexelsKey').value = savedPexelsKey;
+            if (savedIgToken) document.getElementById('igToken').value = savedIgToken;
+            if (savedIgUser) document.getElementById('igUser').value = savedIgUser;
+            if (savedNgrok) document.getElementById('ngrokToken').value = savedNgrok;
+            if (savedFbToken) document.getElementById('fbToken').value = savedFbToken;
+            if (savedFbPage) document.getElementById('fbPageId').value = savedFbPage;
+        } else {
+            settingsCard.style.display = 'block';
+            mainCard.style.display = 'none';
+        }
+
+        toggleSettingsBtn.addEventListener('click', () => {
+            settingsCard.style.display = 'block';
+            mainCard.style.display = 'none';
+        });
+
+        tiktokLoginBtn.addEventListener('click', async () => {
+            tiktokLoginBtn.innerText = "Launching Browser...";
+            await fetch(`${API_BASE}/tiktok/login`);
+            tiktokLoginBtn.innerText = "🎵 Login to TikTok";
+            alert("Browser launched. Log in to TikTok and then you can close that window.");
+        });
+
+        saveSettingsBtn.addEventListener('click', () => {
+            const key = apiKeyInput.value.trim();
+            if (key) {
+                localStorage.setItem('gemini_api_key', key);
+                localStorage.setItem('pexels_api_key', document.getElementById('pexelsKey').value.trim());
+                localStorage.setItem('ig_access_token', document.getElementById('igToken').value.trim());
+                localStorage.setItem('ig_user_id', document.getElementById('igUser').value.trim());
+                localStorage.setItem('ngrok_token', document.getElementById('ngrokToken').value.trim());
+                localStorage.setItem('fb_access_token', document.getElementById('fbToken').value.trim());
+                localStorage.setItem('fb_page_id', document.getElementById('fbPageId').value.trim());
+                
+                settingsCard.style.display = 'none';
+                mainCard.style.display = 'block';
+            }
+        });
+
+        async function pollJobs() {
+            try {
+                const res = await fetch(`${API_BASE}/jobs`);
+                const jobs = await res.json();
+                renderGallery(jobs);
+            } catch (e) {
+                console.error("Polling failed", e);
+            }
+        }
+
+        function renderGallery(jobs) {
+            galleryGrid.innerHTML = '';
+            Object.values(jobs).reverse().forEach(job => {
+                job.clips.forEach(clip => {
+                    const videoUrl = `${API_BASE}/videos/SmartShort_${clip.id}_${clip.title}.mp4`;
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    card.style.margin = '0';
+                    card.style.position = 'relative';
+                    
+                    const statusBadge = job.status === 'completed' ? '' : 
+                                      `<div style="position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); color: var(--primary); padding: 5px 10px; border-radius: 4px; font-size: 0.75rem; z-index: 10; border: 1px solid var(--primary);">
+                                          ${job.status.toUpperCase()}
+                                       </div>`;
+
+                    card.innerHTML = `
+                        ${statusBadge}
+                        <video src="${videoUrl}" controls style="width: 100%; border-radius: 8px; aspect-ratio: 9/16; background: #000; opacity: ${job.status === 'completed' ? 1 : 0.3}"></video>
+                        <h3 style="margin: 1rem 0 0.5rem 0; font-size: 1rem;">${clip.title}</h3>
+                        <p style="color: var(--text-dim); font-size: 0.85rem; background: var(--bg); padding: 0.75rem; border-radius: 4px; border: 1px solid var(--border);">
+                            ${clip.caption || 'Generating caption...'}
+                        </p>
+                        <button onclick="navigator.clipboard.writeText('${clip.caption}')" style="background: var(--surface); color: var(--primary); border: 1px solid var(--primary); padding: 0.5rem; font-size: 0.75rem; margin-top: 0.5rem;" ${job.status !== 'completed' ? 'disabled' : ''}>Copy Caption</button>
+                    `;
+                    galleryGrid.appendChild(card);
+                });
+            });
+            if (Object.keys(jobs).length > 0) outputDiv.style.display = 'block';
+        }
+
+        setInterval(pollJobs, 3000);
+
+        generateBtn.addEventListener('click', async () => {
+            const key = localStorage.getItem('gemini_api_key');
+            const selectedStyle = document.getElementById('styleSelect').value;
+            
+            let urls = [];
+            if (batchToggle.checked) {
+                urls = batchUrlsInput.value.split('\n').map(u => u.trim()).filter(u => u !== '');
+            } else {
+                const singleUrl = videoUrlInput.value.trim();
+                if (singleUrl) urls.push(singleUrl);
+            }
+
+            if (!key || urls.length === 0) return alert('Check settings & URL(s)');
+
+            generateBtn.disabled = true;
+            
+            for (let i = 0; i < urls.length; i++) {
+                const url = urls[i];
+                statusMsg.innerText = `Orchestrating [${i+1}/${urls.length}]: ${url}...`;
+
+                try {
+                    // REAL AI ORCHESTRATION with Gemini
+                    const GEMINI_MODEL = "gemini-flash-latest";
+                    const prompt = `Analyze this YouTube video URL: ${url}. 
+                    Identify 1-2 highly viral segments (max 30 seconds each).
+                    Output a JSON object following this schema:
+                    {
+                        "video_url": "${url}",
+                        "clips": [
+                            {
+                                "id": number (timestamp),
+                                "title": "Short_Descriptive_Title",
+                                "start_time": "HH:MM:SS",
+                                "end_time": "HH:MM:SS",
+                                "caption": "Catchy social media caption with emojis 🚀✨",
+                                "style": "${selectedStyle}",
+                                "bgm_mood": "lofi"|"epic"|"funny"|"tense"|"upbeat",
+                                "broll_keywords": ["keyword1", "keyword2"],
+                                "timeline": [
+                                    { 
+                                        "rel_start": number, 
+                                        "rel_end": number, 
+                                        "crop_mode": "center"|"left"|"right"|"track", 
+                                        "zoom": number 
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                    Use "track" mode for interviews, podcasts, or segments where a speaker moves. 
+                    Include 1-2 generic "broll_keywords" for stock footage overlays.
+                    Select a "bgm_mood" that matches the segment's energy.
+                    The "caption" MUST include relevant emojis to increase retention.
+                    Focus on high-energy parts or key insights. Ensure HH:MM:SS format.`;
+
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ text: prompt }] }],
+                            generationConfig: { response_mime_type: "application/json" }
+                        })
+                    });
+
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error?.message || 'Gemini API Error');
+
+                    const orchestrationText = result.candidates[0].content.parts[0].text;
+                    const orchestration = JSON.parse(orchestrationText);
+                    orchestration.pexels_key = localStorage.getItem('pexels_api_key');
+                    
+                    // Add Publish Targets & Tokens
+                    orchestration.publish_targets = [];
+                    if (document.getElementById('pubYoutube').checked) orchestration.publish_targets.push('youtube');
+                    if (document.getElementById('pubInsta').checked) orchestration.publish_targets.push('instagram');
+                    if (document.getElementById('pubTiktok').checked) orchestration.publish_targets.push('tiktok');
+                    if (document.getElementById('pubFb').checked) orchestration.publish_targets.push('facebook');
+                    
+                    orchestration.ig_access_token = localStorage.getItem('ig_access_token');
+                    orchestration.ig_user_id = localStorage.getItem('ig_user_id');
+                    orchestration.ngrok_token = localStorage.getItem('ngrok_token');
+                    orchestration.fb_access_token = localStorage.getItem('fb_access_token');
+                    orchestration.fb_page_id = localStorage.getItem('fb_page_id');
+
+                    const res = await fetch(`${API_BASE}/process`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(orchestration)
+                    });
+                    
+                    if (!res.ok) throw new Error('Failed to dispatch to backend');
+                    
+                    statusMsg.innerText = `Dispatched [${i+1}/${urls.length}]. Moving to next...`;
+
+                } catch (err) {
+                    console.error(err);
+                    statusMsg.innerText = 'Error on ' + url + ': ' + err.message;
+                    // Continue to next URL in batch even on error
+                }
+            }
+
+            statusMsg.innerText = 'All items dispatched to the factory queue!';
+            generateBtn.disabled = false;
+        });
+    </script>
+</body>
+</html>

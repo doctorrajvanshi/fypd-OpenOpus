@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>fypd | The Autonomous Factory for Viral Growth</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&family=Love+Light&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS (CDN for standalone landing page) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#ffff00",
+                        surface: "#16161a",
+                        background: "#0a0a0c",
+                        border: "#27272a",
+                        "text-dim": "#a1a1aa",
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        love: ['"Love Light"', 'cursive'],
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        body {
+            background-color: #0a0a0c;
+            color: #e1e1e6;
+            overflow-x: hidden;
+        }
+        .glass {
+            background: rgba(22, 22, 26, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .glow-text {
+            text-shadow: 0 0 20px rgba(255, 255, 0, 0.3);
+        }
+        .animate-float {
+            animation: float 6s ease-in-out infinite;
+        }
+
+        /* Factory Flow Animations */
+        @keyframes scan {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+        .animate-scan {
+            animation: scan 3s linear infinite;
+        }
+
+        @keyframes source-fade {
+            0%, 20% { opacity: 0; transform: scale(0.9); }
+            30%, 50% { opacity: 1; transform: scale(1); }
+            60%, 100% { opacity: 0; transform: scale(1.1); }
+        }
+        .animate-source-fade {
+            animation: source-fade 8s ease-in-out infinite;
+        }
+
+        @keyframes short-pop {
+            0%, 60% { opacity: 0; transform: translateY(40px) scale(0.8); }
+            70%, 90% { opacity: 1; transform: translateY(0) scale(1); }
+            100% { opacity: 0; transform: translateY(-20px) scale(0.9); }
+        }
+        .animate-short-pop {
+            animation: short-pop 8s ease-in-out infinite;
+        }
+
+        @keyframes float-particle {
+            0% { transform: translateY(0) scale(0); opacity: 0; }
+            20% { opacity: 1; }
+            100% { transform: translateY(-100px) scale(1.5); opacity: 0; }
+        }
+        .animate-float-particle {
+            animation: float-particle 4s ease-out infinite;
+        }
+
+        @keyframes bounce-short {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+        .animate-bounce-short {
+            animation: bounce-short 2s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+            100% { transform: translateY(0px); }
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0a0a0c; }
+        ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #333; }
+    </style>
+</head>
+<body class="antialiased font-sans selection:bg-primary selection:text-black">
+
+    <!-- Background Glow Effect -->
+    <div class="fixed inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,0,0.05),transparent_50%)] pointer-events-none z-[-1]"></div>
+
+    <!-- Navigation -->
+    <nav class="fixed top-0 w-full glass z-50">
+        <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <!-- SVG Logo matching the app -->
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-[#1c1c1e] to-black flex items-center justify-center border border-white/5 shadow-[0_0_15px_rgba(255,255,0,0.1)]">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="6" y="4" width="12" height="16" rx="2.5" stroke="#ffff00" strokeWidth="1.5"/>
+                        <path d="M10.5 9.5L14.5 12L10.5 14.5V9.5Z" fill="#ffff00"/>
+                    </svg>
+                </div>
+                <span class="text-3xl font-love lowercase italic text-white leading-none mt-1">fypd</span>
+            </div>
+            <div class="flex items-center gap-8 text-[10px] font-black tracking-[0.2em] uppercase">
+                <a href="#features" class="text-text-dim hover:text-white transition-colors hidden md:block">Process</a>
+                <a href="#download" class="text-text-dim hover:text-white transition-colors hidden md:block">Download</a>
+                <a href="#support" class="bg-primary text-black px-6 py-2.5 rounded-full transition-all hover:scale-105">Support ☕</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="pt-48 pb-32 px-6 relative min-h-screen flex items-center">
+        <div class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+            <div>
+                <div class="inline-block mb-6 px-4 py-1.5 rounded-full border border-primary/30 bg-primary/10 text-primary text-[10px] font-black uppercase tracking-[0.3em]">
+                    v0.1.0 Alpha Build
+                </div>
+                <h1 class="text-6xl md:text-8xl font-black tracking-tighter text-white uppercase italic mb-8 leading-none">
+                    Dominate the <span class="text-primary glow-text block">Algorithm</span>
+                </h1>
+                <p class="text-xl text-text-dim max-w-xl mb-12 font-medium leading-relaxed">
+                    The autonomous factory for viral growth. Ingest long-form content, let AI orchestrate the hooks, and automatically publish 9:16 shorts to the world.
+                    <span class="text-white block mt-4 font-bold border-l-2 border-primary pl-4">No monthly fees. No cloud limits. Your hardware, your growth.</span>
+                </p>
+                
+                <div class="flex flex-col sm:flex-row gap-6 items-center" id="download">
+                    <!-- Windows Download -->
+                    <a href="https://github.com/doctorrajvanshi/fypd-OpenOpus/releases/latest" target="_blank" class="w-full sm:w-auto bg-primary text-black px-10 py-5 rounded-[24px] font-black uppercase tracking-widest text-xs hover:scale-[1.05] active:scale-[0.98] transition-all shadow-[0_20px_50px_rgba(255,255,0,0.2)] flex items-center justify-center gap-3">
+                        <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M0,3.449L9.75,2.101v8.929H0V3.449z M24,0L10.949,1.797v9.233H24V0z M10.949,11.968L24,11.969v12.032L10.949,22.203V11.968z M0,11.968h9.75v8.929L0,20.549V11.968z"/></svg>
+                        Download for Windows
+                    </a>
+                    
+                    <!-- macOS Download -->
+                    <a href="https://github.com/doctorrajvanshi/fypd-OpenOpus/releases/latest" target="_blank" class="w-full sm:w-auto bg-surface text-white px-10 py-5 rounded-[24px] font-black uppercase tracking-widest text-xs hover:bg-white/10 transition-all border border-white/10 flex items-center justify-center gap-3">
+                        <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm3.173 14.283c-1.579.034-3.15-.436-4.453-1.332-1.303.896-2.874 1.366-4.453 1.332.18-1.558.847-3.036 1.89-4.2l-.768-1.748c-1.026.155-2.029-.26-2.735-1.129 1.15-.386 2.378-.386 3.528 0l1.242-1.353-.296-1.523c1.074.801 1.956 1.838 2.57 3.023.614-1.185 1.496-2.222 2.57-3.023l-.296 1.523 1.242 1.353c1.15-.386 2.378-.386 3.528 0-.706.869-1.709 1.284-2.735 1.129l-.768 1.748c1.043 1.164 1.71 2.642 1.89 4.2z"/></svg>
+                        Download for macOS
+                    </a>
+                </div>
+                <p class="mt-6 text-[10px] text-text-dim uppercase tracking-[0.2em] font-bold">Installer: ~2MB • Requirements: Python 3.10+</p>
+            </div>
+            
+            <div class="hidden lg:block relative">
+                <!-- Visual Placeholder for the Dashboard -->
+                <div class="absolute -inset-10 bg-primary/10 blur-[100px] rounded-full"></div>
+                <div class="relative glass rounded-[40px] p-2 border border-white/10 shadow-2xl overflow-hidden aspect-[4/3] flex items-center justify-center">
+                    
+                    <!-- Animated Factory Flow -->
+                    <div class="relative w-full h-full flex items-center justify-center">
+                        
+                        <!-- 1. The Widescreen Source (Disappears) -->
+                        <div class="absolute w-4/5 aspect-video bg-white/5 border border-white/20 rounded-xl flex items-center justify-center animate-source-fade overflow-hidden">
+                            <div class="w-full h-full bg-[linear-gradient(45deg,rgba(255,255,0,0.05)_25%,transparent_25%,transparent_50%,rgba(255,255,0,0.05)_50%,rgba(255,255,0,0.05)_75%,transparent_75%,transparent)] bg-[length:20px_20px] animate-scan"></div>
+                            <div class="absolute inset-0 flex items-center justify-center">
+                                <div class="px-4 py-2 rounded-lg bg-black/50 backdrop-blur-md border border-white/10 text-[10px] font-black uppercase tracking-widest text-white/40">
+                                    Raw 16:9 Feed
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 2. The Vertical Shorts (Pop out) -->
+                        <div class="flex gap-4 items-center justify-center w-full h-full pt-8">
+                            <!-- Short 1 -->
+                            <div class="w-24 aspect-[9/16] bg-surface border border-white/10 rounded-xl relative animate-short-pop shadow-2xl overflow-hidden" style="animation-delay: 2s;">
+                                <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
+                                <div class="absolute bottom-4 left-2 right-2 space-y-1">
+                                    <div class="h-1 w-2/3 bg-primary/50 rounded-full"></div>
+                                    <div class="h-1 w-1/2 bg-white/20 rounded-full"></div>
+                                </div>
+                                <div class="absolute top-2 right-2 flex flex-col items-center gap-1">
+                                    <span class="text-[8px] font-black text-primary">🔥 84k</span>
+                                </div>
+                                <div class="absolute inset-0 flex items-center justify-center">
+                                    <div class="w-8 h-8 rounded-full border border-primary/20 flex items-center justify-center">
+                                        <div class="w-0 h-0 border-t-[4px] border-t-transparent border-l-[6px] border-l-primary border-b-[4px] border-b-transparent ml-0.5"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Short 2 (Main) -->
+                            <div class="w-32 aspect-[9/16] bg-surface border border-primary/30 rounded-2xl relative animate-short-pop shadow-[0_20px_50px_rgba(255,255,0,0.1)] z-10 scale-110 overflow-hidden" style="animation-delay: 2.3s;">
+                                <div class="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1611162617474-5b21e879e113?q=80&w=1000&auto=format&fit=crop')] bg-cover bg-center opacity-30"></div>
+                                <div class="absolute inset-0 bg-gradient-to-t from-black to-transparent"></div>
+                                <!-- Animated Caption -->
+                                <div class="absolute top-1/2 left-0 right-0 text-center px-2 animate-bounce-short">
+                                    <span class="bg-primary text-black text-[10px] font-black uppercase px-2 py-0.5 rounded shadow-lg">DOMINATE THE FYP 🚀</span>
+                                </div>
+                                <div class="absolute bottom-6 left-4 right-4 space-y-2">
+                                    <div class="h-1.5 w-full bg-primary rounded-full"></div>
+                                    <div class="h-1.5 w-3/4 bg-white/20 rounded-full"></div>
+                                </div>
+                                <div class="absolute top-4 right-4 flex flex-col items-center gap-1">
+                                    <span class="text-[10px] font-black text-primary">🔥 1.2M</span>
+                                </div>
+                            </div>
+
+                            <!-- Short 3 -->
+                            <div class="w-24 aspect-[9/16] bg-surface border border-white/10 rounded-xl relative animate-short-pop shadow-2xl overflow-hidden" style="animation-delay: 2.6s;">
+                                <div class="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent"></div>
+                                <div class="absolute bottom-4 left-2 right-2 space-y-1">
+                                    <div class="h-1 w-3/4 bg-primary/50 rounded-full"></div>
+                                    <div class="h-1 w-1/3 bg-white/20 rounded-full"></div>
+                                </div>
+                                <div class="absolute top-2 right-2 flex flex-col items-center gap-1">
+                                    <span class="text-[8px] font-black text-primary">🔥 12k</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Floating Virality Particles -->
+                        <div class="absolute inset-0 pointer-events-none overflow-hidden">
+                             <div class="absolute bottom-0 left-1/4 animate-float-particle opacity-0" style="animation-delay: 3s;">❤️</div>
+                             <div class="absolute bottom-0 left-1/2 animate-float-particle opacity-0" style="animation-delay: 3.5s;">🔥</div>
+                             <div class="absolute bottom-0 right-1/4 animate-float-particle opacity-0" style="animation-delay: 4s;">🚀</div>
+                             <div class="absolute bottom-1/4 right-1/3 animate-float-particle opacity-0" style="animation-delay: 3.2s;">✨</div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="py-32 border-t border-white/5 bg-[#121214] relative overflow-hidden">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="flex flex-col md:flex-row justify-between items-center mb-24 gap-8">
+                <div class="max-w-xl">
+                    <h2 class="text-4xl md:text-5xl font-black uppercase italic tracking-tighter text-white mb-6 leading-none">The Factory <span class="text-primary">Pipeline</span></h2>
+                    <p class="text-text-dim text-lg">Stop editing. Start growing. fypd handles the grunt work while you handle the strategy.</p>
+                </div>
+                <div class="flex gap-4">
+                    <div class="text-center bg-white/5 border border-white/5 p-6 rounded-[32px] min-w-[140px]">
+                        <p class="text-3xl font-black text-white">0$</p>
+                        <p class="text-[9px] uppercase font-bold text-text-dim tracking-widest">SaaS Fees</p>
+                    </div>
+                    <div class="text-center bg-white/5 border border-white/5 p-6 rounded-[32px] min-w-[140px]">
+                        <p class="text-3xl font-black text-white">100%</p>
+                        <p class="text-[9px] uppercase font-bold text-text-dim tracking-widest">Local</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-12">
+                <!-- Feature 1 -->
+                <div class="space-y-6">
+                    <div class="text-primary text-4xl font-black opacity-20 italic">01</div>
+                    <h3 class="text-2xl font-bold text-white uppercase italic tracking-tight">Active Speaker Tracking</h3>
+                    <p class="text-text-dim leading-relaxed">Using MediaPipe neural arrays, fypd automatically reframes widescreen video to 9:16 by following the speaker's face in real-time. No more static center crops.</p>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="space-y-6">
+                    <div class="text-primary text-4xl font-black opacity-20 italic">02</div>
+                    <h3 class="text-2xl font-bold text-white uppercase italic tracking-tight">Retention-First Visuals</h3>
+                    <p class="text-text-dim leading-relaxed">Dynamic kinetic typography styled with high-contrast templates (Hormozi, Neon). Combined with auto-inserted B-roll and mood-aware background music.</p>
+                </div>
+
+                <!-- Feature 3 -->
+                <div class="space-y-6">
+                    <div class="text-primary text-4xl font-black opacity-20 italic">03</div>
+                    <h3 class="text-2xl font-bold text-white uppercase italic tracking-tight">The social Quartet</h3>
+                    <p class="text-text-dim leading-relaxed">A managed sequential queue that orchestrates your batch and publishes directly to YouTube, Instagram, Facebook, and TikTok. Set it up at night, be viral by morning.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Support / Tip Jar Section -->
+    <section id="support" class="py-48 relative overflow-hidden flex items-center min-h-[80vh]">
+        <div class="absolute inset-0 bg-[radial-gradient(circle_at_bottom,rgba(255,255,0,0.05),transparent_60%)] pointer-events-none"></div>
+        <div class="max-w-4xl mx-auto px-6 text-center">
+            <div class="w-24 h-24 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mx-auto mb-10 shadow-2xl">
+                <span class="text-4xl">☕</span>
+            </div>
+            <h2 class="text-5xl md:text-6xl font-black uppercase italic tracking-tighter text-white mb-8 leading-none">Support the <span class="text-primary">Indie</span> Factory</h2>
+            <p class="text-xl text-text-dim mb-12 max-w-2xl mx-auto leading-relaxed">
+                fypd is a rejection of the SaaS model. No subscriptions, no credits, no locked features. It is built for creators who want to own their tools. 
+                <br><br>
+                <span class="text-white font-bold italic uppercase tracking-wider">If fypd saves you hours or makes you thousands, consider keeping the engine running with a tip.</span>
+            </p>
+            
+            <div class="flex flex-col sm:flex-row gap-6 justify-center items-center">
+                <!-- Buy Me a Coffee -->
+                <a href="#" target="_blank" class="w-full sm:w-auto bg-[#FFDD00] text-black px-12 py-5 rounded-[24px] font-black uppercase tracking-widest text-xs hover:scale-[1.05] transition-transform flex items-center justify-center gap-3">
+                    ☕ Buy Me a Coffee
+                </a>
+                <!-- GitHub -->
+                <a href="https://github.com/doctorrajvanshi/fypd-OpenOpus" target="_blank" class="w-full sm:w-auto bg-surface text-white px-12 py-5 rounded-[24px] font-black uppercase tracking-widest text-xs hover:bg-white/10 transition-colors border border-white/10 flex items-center justify-center gap-3">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    GitHub Project
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-white/5 py-12 bg-black">
+        <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-10">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="6" y="4" width="12" height="16" rx="2.5" stroke="#ffff00" strokeWidth="2"/>
+                    </svg>
+                </div>
+                <span class="text-2xl font-love lowercase italic text-white opacity-40">fypd</span>
+            </div>
+            <p class="text-text-dim text-[10px] uppercase font-bold tracking-[0.3em] text-center md:text-left">
+                Built for the creators by the creators.
+            </p>
+            <div class="flex gap-8 text-[10px] font-black uppercase tracking-widest text-text-dim">
+                <a href="#" class="hover:text-primary transition-colors">Documentation</a>
+                <a href="#" class="hover:text-primary transition-colors">Privacy</a>
+                <a href="#" class="hover:text-primary transition-colors">Twitter</a>
+            </div>
+        </div>
+    </footer>
+
+</body>
+</html>

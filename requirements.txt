@@ -1,0 +1,16 @@
+yt-dlp>=2023.11.16
+openai-whisper>=20231117
+moviepy==1.0.3
+numpy>=1.24.0
+textwrap3
+fastapi
+uvicorn
+mediapipe==0.10.13
+scenedetect[opencv]
+requests
+google-api-python-client
+google-auth-oauthlib
+pyngrok
+playwright
+litellm>=1.35.0
+# Note: ImageMagick must be installed on your system (magick.exe on Windows)
