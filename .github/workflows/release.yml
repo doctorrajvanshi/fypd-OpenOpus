@@ -23,39 +23,30 @@ jobs:
         with:
           node-version: lts/*
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Build React Frontend
+      - name: Install Linux Dependencies (Ubuntu Only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev
+
+      - name: Install Frontend Dependencies
         run: |
           cd frontend
           npm install
-          npm run build
 
-      - name: Install Python Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Build Executable via PyInstaller
-        run: python build_executable.py
-
-      - name: Prepare Release Artifacts
-        shell: bash
-        run: |
-          if [ "${{ matrix.platform }}" == "windows-latest" ]; then
-            mv dist/fypd.exe dist/fypd-windows.exe
-          else
-            mv dist/fypd dist/fypd-${{ matrix.platform }}
-          fi
-
-      - name: Upload to GitHub Releases
-        uses: softprops/action-gh-release@v2
+      - name: Build & Publish Tauri App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          files: |
-            dist/fypd-windows.exe
-            dist/fypd-macos-latest
-            dist/fypd-ubuntu-22.04
+          tagName: ${{ github.ref_name }}
+          releaseName: 'fypd ${{ github.ref_name }}'
+          releaseBody: 'Autonomous Content Factory Standalone Release.'
+          releaseDraft: true
+          prerelease: false
+          projectPath: './frontend'

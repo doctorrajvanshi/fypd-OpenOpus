@@ -5,7 +5,7 @@ fypd (formerly Viral Clipper) is an automated video curation and reframing pipel
 
 ### Core Architecture
 - **Orchestration:** A premium, Apple-inspired React dashboard (built with Vite + Tailwind + Framer Motion) orchestrates the Gemini API to analyze videos and manage the autonomous production queue.
-- **Backend (FastAPI):** `app_server.py` manages a sequential background task queue, secure on-demand tunneling, and serves the React UI.
+- **Backend (FastAPI & Tauri):** `app_server.py` manages a sequential background task queue, secure on-demand tunneling, and serves the React UI natively within the lightweight Tauri desktop window.
 - **Python Core (`viral_clipper.py`):** A localized kinetic editing engine that processes structural JSON payloads with Computer Vision (CV) and professional rendering templates.
 - **Key Technologies:**
   - **Gemini API:** Used for intelligent clip selection, captioning (with emojis), and mood/keyword generation.

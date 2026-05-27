@@ -46,6 +46,8 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
+*Note: To build the standalone Desktop App, we use a fully automated GitHub Actions pipeline with Tauri. Just push a `v*` tag to trigger the cloud release.*
+
 ### 3. Configuration & Environment Variables
 Copy the `.env.example` file to `.env` and set the path to your ImageMagick executable:
 ```bash

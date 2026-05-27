@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0] - 2026-05-27
+### Added
+- Fully automated PyInstaller build pipeline via GitHub Actions.
+- Native custom `.ico` and `favicon.svg` branding.
+- Multi-provider LLM settings (OpenAI, Anthropic, Ollama, LM Studio).
+- Content Repurposing Hub for auto-generating Twitter threads and Medium articles.
+
+### Changed
+- Migrated core face tracking engine from the deprecated `mediapipe.python.solutions` API to the modern `mediapipe.tasks.vision` API.
+- Restored the lightweight Tauri desktop wrapper architecture to ensure optimal installer sizes, deferring ML python environment resolution to runtime.
+
+### Fixed
+- Permanently resolved the critical Windows Python 3.12 `libprotobuf` text parsing crash.
+- Eliminated dependency locks, safely upgrading to `mediapipe==0.10.35` and `protobuf==5.29.6`.
+
 ## [0.1.0] - 2026-05-26
 ### Added
 - Initial release of the **fypd** core.
