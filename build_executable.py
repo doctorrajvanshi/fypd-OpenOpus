@@ -17,6 +17,7 @@ PyInstaller.__main__.run([
     'app_server.py',
     '--onefile',
     '--name=fypd',
+    '--icon=app_icon.ico',
     *data_args,
     '--hidden-import=uvicorn.logging',
     '--hidden-import=uvicorn.loops',

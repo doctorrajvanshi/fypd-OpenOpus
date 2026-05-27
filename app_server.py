@@ -1,6 +1,37 @@
 import os
 import sys
 import json
+import logging
+
+log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fypd.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+class StreamToLogger:
+    def __init__(self, logger, log_level):
+        self.logger = logger
+        self.log_level = log_level
+        
+    def write(self, buf):
+        for line in buf.rstrip().splitlines():
+            self.logger.log(self.log_level, line.rstrip())
+            
+    def flush(self):
+        pass
+
+# Store original standard streams just in case
+sys_original_stdout = sys.stdout
+sys_original_stderr = sys.stderr
+
+# Redirect stdout and stderr to the log file
+sys.stdout = StreamToLogger(logging.getLogger('STDOUT'), logging.INFO)
+sys.stderr = StreamToLogger(logging.getLogger('STDERR'), logging.ERROR)
 import asyncio
 import uuid
 import shutil
@@ -369,6 +400,12 @@ async def serve_ui():
     if os.path.exists(os.path.join(FRONTEND_DIR, "index.html")):
         return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
     return FileResponse(os.path.join(BASE_DIR, "index.html"))
+
+@app.get("/favicon.svg")
+async def serve_favicon():
+    if os.path.exists(os.path.join(FRONTEND_DIR, "favicon.svg")):
+        return FileResponse(os.path.join(FRONTEND_DIR, "favicon.svg"))
+    return FileResponse(os.path.join(BASE_DIR, "frontend/public/favicon.svg"))
 
 @app.post("/process")
 async def process_video(request: ProcessRequest):

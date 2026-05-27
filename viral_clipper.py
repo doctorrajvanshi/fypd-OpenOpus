@@ -84,19 +84,21 @@ STYLE_TEMPLATES = {
     }
 }
 
-# Initialize MediaPipe Face Detection
-try:
-    if not hasattr(mp, 'solutions'):
-        # Fallback for some MediaPipe builds where submodules aren't auto-loaded
-        from mediapipe.python import solutions as mp_solutions
-        mp.solutions = mp_solutions
-    mp_face_detection = mp.solutions.face_detection
-except (AttributeError, ImportError):
-    print("[-] MediaPipe Attribute Error: 'solutions' module not found.")
-    print("[*] Re-attempting explicit sub-import...")
-    import mediapipe.python.solutions.face_detection as mp_face_detection
+# Initialize MediaPipe Face Detection (Tasks API)
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision
+import urllib.request
 
-face_detector = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
+MODEL_PATH = get_resource_path("blaze_face_short_range.tflite")
+
+if not os.path.exists(MODEL_PATH):
+    print(f"[*] Downloading MediaPipe face tracking model asset...")
+    urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+
+base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
+options = vision.FaceDetectorOptions(base_options=base_options, min_detection_confidence=0.5)
+face_detector = vision.FaceDetector.create_from_options(options)
 
 class MultiFaceTracker:
     """Handles frame-by-frame face detection and smooth coordinate interpolation"""
@@ -109,7 +111,8 @@ class MultiFaceTracker:
     def get_crop_window(self, frame):
         # Convert to RGB for MediaPipe
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = face_detector.process(rgb_frame)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        results = face_detector.detect(mp_image)
         
         target_center_x = self.last_center_x
         
@@ -117,8 +120,8 @@ class MultiFaceTracker:
             # Find the largest face (highest confidence or biggest area)
             # For simplicity, we take the first detection which is usually the most prominent
             detection = results.detections[0]
-            bbox = detection.location_data.relative_bounding_box
-            face_center_x = int((bbox.xmin + bbox.width / 2) * self.orig_w)
+            bbox = detection.bounding_box
+            face_center_x = int(bbox.origin_x + (bbox.width / 2))
             target_center_x = face_center_x
             
         # Apply Exponential Moving Average (EMA) smoothing
