@@ -3,7 +3,7 @@ import sys
 import json
 import logging
 
-log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fypd.log")
+log_file = os.path.join(os.getcwd(), "fypd.log")
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -24,6 +24,9 @@ class StreamToLogger:
             
     def flush(self):
         pass
+
+    def isatty(self):
+        return False
 
 # Store original standard streams just in case
 sys_original_stdout = sys.stdout
