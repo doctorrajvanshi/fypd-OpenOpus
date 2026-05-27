@@ -26,13 +26,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": [
-      "../../app_server.py",
-      "../../viral_clipper.py",
-      "../../social_publisher.py",
-      "../../requirements.txt",
-      "../../bin/*"
-    ],
+    "resources": {
+      "../../app_server.py": "app_server.py",
+      "../../viral_clipper.py": "viral_clipper.py",
+      "../../social_publisher.py": "social_publisher.py",
+      "../../requirements.txt": "requirements.txt",
+      "../../blaze_face_short_range.tflite": "blaze_face_short_range.tflite",
+      "../../bin/": "bin/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
