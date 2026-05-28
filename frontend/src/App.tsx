@@ -25,6 +25,8 @@ import axios from 'axios';
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 const API_BASE = (window.location.port === '5173' || window.location.origin.includes('tauri') || window.location.protocol === 'file:')
   ? 'http://127.0.0.1:8000'
@@ -83,6 +85,7 @@ interface Job {
 const App: React.FC = () => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [initProgress, setInitProgress] = useState("Checking factory status...");
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'downloading' | 'ready'>('idle');
   
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [url, setUrl] = useState('');
@@ -149,6 +152,19 @@ const App: React.FC = () => {
         setIsInitializing(false);
         return;
       }
+
+      // Check for Updates
+      try {
+        const update = await check();
+        if (update?.available) {
+          setUpdateStatus('downloading');
+          await update.downloadAndInstall();
+          setUpdateStatus('ready');
+        }
+      } catch (err) {
+        console.error("Update check failed", err);
+      }
+
       const unlisten = await listen("setup-progress", (event: { payload: string }) => {
         setInitProgress(event.payload);
       });
@@ -340,6 +356,37 @@ const App: React.FC = () => {
                 <motion.div animate={{ x: [-256, 256] }} transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }} className="w-full h-full bg-primary shadow-[0_0_15px_rgba(255,255,0,0.5)]" />
              </div>
              <p className="mt-6 text-[10px] uppercase font-black tracking-[0.3em] text-primary animate-pulse">{initProgress}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {updateStatus !== 'idle' && (
+          <motion.div 
+            initial={{ opacity: 0, x: 50 }} 
+            animate={{ opacity: 1, x: 0 }} 
+            exit={{ opacity: 0, x: 50 }} 
+            className="fixed top-8 right-8 z-[200] glass p-4 rounded-3xl border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.8)] flex items-center gap-4 bg-[#0a0a0c]/80 backdrop-blur-2xl"
+          >
+            {updateStatus === 'downloading' ? (
+              <>
+                <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}>
+                  <RefreshCw className="w-4 h-4 text-primary" />
+                </motion.div>
+                <span className="text-[10px] font-black text-white tracking-widest uppercase">Downloading Update...</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-4 h-4 text-green-400" />
+                <span className="text-[10px] font-black text-white tracking-widest uppercase">Update Ready</span>
+                <button 
+                  onClick={() => relaunch()} 
+                  className="bg-primary text-black px-4 py-2.5 rounded-xl text-[9px] font-black uppercase hover:scale-[1.03] transition-all ml-2"
+                >
+                  Restart
+                </button>
+              </>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

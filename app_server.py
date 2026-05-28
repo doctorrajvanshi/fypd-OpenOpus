@@ -3,7 +3,21 @@ import sys
 import json
 import logging
 
-log_file = os.path.join(os.getcwd(), "fypd.log")
+# --- Resolve writable data directory ---
+# When launched by Tauri, FYPD_DATA_DIR is injected as an env var.
+# In dev mode (python app_server.py directly), fall back to a user AppData path.
+_FYPD_DATA = os.environ.get("FYPD_DATA_DIR") or os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "fypd"
+)
+LOG_DIR    = os.path.join(_FYPD_DATA, "logs")
+OUTPUT_DIR = os.path.join(_FYPD_DATA, "outputs")
+TEMP_DIR   = os.path.join(_FYPD_DATA, "temp")
+CRASH_LOG  = os.path.join(_FYPD_DATA, "crash_log.txt")
+
+for _d in (LOG_DIR, OUTPUT_DIR, TEMP_DIR):
+    os.makedirs(_d, exist_ok=True)
+
+log_file = os.path.join(LOG_DIR, "fypd.log")
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -28,16 +42,11 @@ class StreamToLogger:
     def isatty(self):
         return False
 
-# Store original standard streams just in case
-sys_original_stdout = sys.stdout
-sys_original_stderr = sys.stderr
-
 # Redirect stdout and stderr to the log file
 sys.stdout = StreamToLogger(logging.getLogger('STDOUT'), logging.INFO)
 sys.stderr = StreamToLogger(logging.getLogger('STDERR'), logging.ERROR)
 import asyncio
 import uuid
-import shutil
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,12 +75,7 @@ def get_resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # Keep for runtime output folder
-OUTPUT_DIR = os.path.join(os.getcwd(), "outputs")
 FRONTEND_DIR = get_resource_path("dist_frontend")
-
-# Ensure output directory exists (local to execution, not bundle)
-if not os.path.exists(OUTPUT_DIR):
-    os.makedirs(OUTPUT_DIR)
 
 # In-memory job store and queue
 jobs = {}
@@ -215,9 +219,8 @@ def sanitize_filename(name: str) -> str:
 def run_clipper_sync(job_id: str, data: dict):
     """Core synchronous processing logic executed in a separate thread"""
     try:
-        # Move to output directory so files are saved there
-        original_cwd = os.getcwd()
-        os.chdir(OUTPUT_DIR)
+        # Move to output directory so files are saved there (DEPRECATED - absolute paths used now)
+        # original_cwd removed
         
         # Run the clipper
         viral_clipper.run_production_clipper(data)
@@ -229,7 +232,7 @@ def run_clipper_sync(job_id: str, data: dict):
             for clip in data["clips"]:
                 # Fix #3: Sanitize title to remove characters illegal on Windows.
                 safe_title = sanitize_filename(clip['title'])
-                video_path = f"SmartShort_{clip['id']}_{safe_title}.mp4"
+                video_path = os.path.join(OUTPUT_DIR, f"SmartShort_{clip['id']}_{safe_title}.mp4")
                 caption = clip.get("caption", "New Short from fypd")
                 
                 if "youtube" in targets:
@@ -265,7 +268,7 @@ def run_clipper_sync(job_id: str, data: dict):
             transcript = fetch_youtube_transcript(video_url, job_id)
             if transcript:
                 print(f"[+] Subtitles retrieved successfully. Writing transcript file...")
-                transcript_filename = f"Job_{job_id}_full_transcript.txt"
+                transcript_filename = os.path.join(OUTPUT_DIR, f"Job_{job_id}_full_transcript.txt")
                 with open(transcript_filename, "w", encoding="utf-8") as f:
                     f.write(transcript)
                 
@@ -321,7 +324,7 @@ Output a JSON object with this exact schema:
                     t_match = re.search(r"\{.*\}", t_content, re.DOTALL)
                     if t_match:
                         t_json = json.loads(t_match.group())
-                        tweets_filename = f"Job_{job_id}_full_tweets.json"
+                        tweets_filename = os.path.join(OUTPUT_DIR, f"Job_{job_id}_full_tweets.json")
                         with open(tweets_filename, "w", encoding="utf-8") as f:
                             json.dump(t_json, f, indent=4)
                         print(f"[+] Saved auto-generated tweets to {tweets_filename}")
@@ -364,7 +367,7 @@ Format the output as a beautiful Markdown document."""
                     )
                     m_content = m_response.choices[0].message.content
                     
-                    medium_filename = f"Job_{job_id}_full_medium.md"
+                    medium_filename = os.path.join(OUTPUT_DIR, f"Job_{job_id}_full_medium.md")
                     with open(medium_filename, "w", encoding="utf-8") as f:
                         f.write(m_content)
                     print(f"[+] Saved auto-generated Medium article to {medium_filename}")
@@ -373,7 +376,6 @@ Format the output as a beautiful Markdown document."""
 
         # Update job status
         jobs[job_id]["status"] = "completed"
-        os.chdir(original_cwd)
     except Exception as e:
         print(f"Error processing job {job_id}: {e}")
         jobs[job_id]["status"] = "failed"
@@ -699,7 +701,7 @@ if __name__ == "__main__":
         Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:8000")).start()
         uvicorn.run(app, host="127.0.0.1", port=8000)
     except Exception as e:
-        with open("crash_log.txt", "w") as f:
+        with open(CRASH_LOG, "w") as f:
             f.write(f"CRASH REPORT:\n{str(e)}")
             import traceback
             f.write(traceback.format_exc())

@@ -5,7 +5,7 @@ fypd (formerly Viral Clipper) is an automated video curation and reframing pipel
 
 ### Core Architecture
 - **Orchestration:** A premium, Apple-inspired React dashboard (built with Vite + Tailwind + Framer Motion) orchestrates the Gemini API to analyze videos and manage the autonomous production queue.
-- **Backend (FastAPI & Tauri):** `app_server.py` manages a sequential background task queue, secure on-demand tunneling, and serves the React UI natively within the lightweight Tauri desktop window.
+- **Backend (FastAPI & Tauri):** `app_server.py` manages a sequential background task queue and secure on-demand tunneling. The Tauri desktop window securely injects the `FYPD_DATA_DIR` environment variable to ensure the Python backend seamlessly writes to the user's `%LOCALAPPDATA%` without tripping Windows Administrator permissions.
 - **Python Core (`viral_clipper.py`):** A localized kinetic editing engine that processes structural JSON payloads with Computer Vision (CV) and professional rendering templates.
 - **Key Technologies:**
   - **Gemini API:** Used for intelligent clip selection, captioning (with emojis), and mood/keyword generation.
@@ -44,6 +44,10 @@ The application is now a unified suite.
 4. Select a **Visual Style** (Hormozi, Minimalist, Neon).
 5. Provide a single YouTube URL or toggle **Batch Mode** to ingest multiple URLs at once.
 6. Click "Orchestrate" to begin. Jobs are queued sequentially to manage system resources.
+
+### Global CLI Installation
+- The Tauri application utilizes a custom NSIS script (`nsis/addpath.nsh`) to automatically append the installation directory to the user's PATH.
+- It is configured with `"installMode": "currentUser"`, meaning it can be installed on any Windows machine securely without requiring an Administrator password, writing directly to the user's AppData directory.
 
 ### Key Coding Conventions
 - **Task Queue:** `app_server.py` uses `asyncio.Queue` to process video renders one-by-one.

@@ -16,10 +16,12 @@ graph TD
 
 ## Components
 
-### 1. UI Orchestrator (Browser)
+### 1. UI Orchestrator (Tauri + React)
 - **Security:** BYOK (Bring Your Own Key) for Gemini API, stored in `localStorage`.
 - **Logic:** Queries Gemini to analyze video transcripts and output a structured timeline.
 - **Output:** Generates the `clips.json` file that drives the local engine.
+- **Environment Handoff:** The Tauri Rust binary injects the `FYPD_DATA_DIR` environment variable into the Python backend on startup, ensuring the unified application writes all output files and logs to a safe `%LOCALAPPDATA%` environment without requiring Administrator privileges.
+- **OTA Updates:** The React UI utilizes `@tauri-apps/plugin-updater` to silently check GitHub Releases on startup. Updates are cryptographically verified using a baked-in Ed25519 public key before being applied via the NSIS background hook.
 
 ### 2. Python Core Engine (`viral_clipper.py`)
 - **Network Layer:** Uses `yt-dlp`'s byte-range feature to stream only specific segments of the video.

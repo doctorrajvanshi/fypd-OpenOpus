@@ -21,6 +21,16 @@ By decoupling the heavyweight localized video processing tasks (Whisper, MediaPi
     *   **Interactive AI Scribes:** Input natural language directives (e.g. *"make it more sarcastic"*) to dynamically regenerate text in real time.
 *   **Job-Level Dashboard Grouping:** Collates multiple vertical curations cleanly under widescreen parent **Job Panels** on a single grid.
 *   **Auto-Distribution Pipeline:** Direct programmatic uploads to **YouTube Shorts, Instagram Reels, Facebook Reels, and TikTok**.
+*   **Global CLI Access:** The Tauri desktop installer automatically registers the `fypd` command to your system PATH and installs locally, bypassing the need for administrator privileges.
+*   **Over-The-Air (OTA) Updates:** The built-in Tauri updater securely pulls patches from GitHub Releases, utilizing Ed25519 cryptographic signatures to guarantee zero-tamper background updates.
+
+---
+
+## 📚 Documentation
+- **[GEMINI.md](GEMINI.md):** Core architecture notes, technology stack, and essential developer conventions.
+- **[PRD.md](PRD.md):** Product Requirements Document detailing scope, roadmap, and core user flows.
+- **[architecture.md](architecture.md), [design.md](design.md) & [UI_design.md](UI_design.md):** Detailed system architecture and visual/UI design specifications.
+- **[roadmap.md](roadmap.md) & [changelog.md](changelog.md):** Upcoming features and historical updates.
 
 ---
 
@@ -36,8 +46,8 @@ Before running the suite, make sure you have installed:
 Clone the repository and install the dependencies:
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/fypd.git
-cd fypd
+git clone https://github.com/doctorrajvanshi/fypd-OpenOpus.git
+cd fypd-OpenOpus
 
 # Install Python dependencies
 pip install -r requirements.txt

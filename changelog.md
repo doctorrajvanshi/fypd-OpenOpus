@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-05-28
+### Added
+- Global CLI access support (`fypd` command) via a custom Tauri NSIS installer hook.
+- Unified directory pathing resolving to `%LOCALAPPDATA%\fypd` to prevent UAC administrator prompts during installation.
+### Fixed
+- Fixed backend `StreamToLogger` crash on startup due to missing `isatty` method in detached processes.
+- Re-routed all hardcoded temporary and output directories to use the writable app data path.
+
 ## [1.0.0] - 2026-05-27
 ### Added
 - Fully automated PyInstaller build pipeline via GitHub Actions.

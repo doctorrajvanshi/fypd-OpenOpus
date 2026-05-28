@@ -13,6 +13,10 @@ venv/
 .venv/
 env/
 
+# Tauri Signer Keys
+**/.tauri/
+frontend/~/.tauri/
+
 # System-level output caches
 outputs/
 build/
@@ -22,6 +26,9 @@ dist_frontend/
 crash_log.txt
 test_server.log
 test_server_err.log
+implementation.md
+walkthrough.md
+task.md
 
 # Playwright & Social sessions
 tiktok_session/

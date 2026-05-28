@@ -16,6 +16,16 @@ def get_resource_path(relative_path):
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
+def get_data_path(*parts):
+    """Resolve a writable path under the fypd AppData directory.
+    Reads FYPD_DATA_DIR (set by Tauri) with a local fallback for dev mode."""
+    base = os.environ.get("FYPD_DATA_DIR") or os.path.join(
+        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "fypd"
+    )
+    path = os.path.join(base, *parts)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
+
 # Try to find ImageMagick in the local 'bin' folder (for Tauri standalone mode) or respect environment overrides
 local_magick = os.path.join(os.getcwd(), "bin", "magick.exe")
 bundled_magick = get_resource_path(os.path.join("bin", "magick.exe"))
@@ -90,7 +100,7 @@ from mediapipe.tasks.python import vision
 import urllib.request
 
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
-MODEL_PATH = get_resource_path("blaze_face_short_range.tflite")
+MODEL_PATH = get_data_path("models", "blaze_face_short_range.tflite")
 
 if not os.path.exists(MODEL_PATH):
     print(f"[*] Downloading MediaPipe face tracking model asset...")
@@ -291,7 +301,7 @@ def download_selective_range(url, output_path, start_sec, end_sec):
 def fetch_bgm_by_mood(mood):
     """Searches and downloads a royalty-free audio track matching the mood"""
     search_query = f"ytsearch1:royalty free {mood} music for youtube shorts"
-    output_path = f"bgm_{mood}.mp3"
+    output_path = get_data_path("cache", f"bgm_{mood}.mp3")
     
     if os.path.exists(output_path):
         return output_path
@@ -336,7 +346,7 @@ def fetch_broll_from_pexels(query, api_key):
             video_files = data["videos"][0]["video_files"]
             best_link = video_files[0]["link"] # Usually the first one is fine
             
-            broll_path = f"broll_{query.replace(' ', '_')}.mp4"
+            broll_path = get_data_path("cache", f"broll_{query.replace(' ', '_')}.mp4")
             print(f"[*] Downloading stock asset: {broll_path}")
             v_data = requests.get(best_link).content
             with open(broll_path, "wb") as f:
@@ -364,8 +374,8 @@ def run_production_clipper(json_data):
         style_config = STYLE_TEMPLATES.get(style_name, STYLE_TEMPLATES["hormozi"])
         
         safe_title = sanitize_filename(clip['title'])
-        raw_buffer_file = f"network_chunk_buffer_{clip['id']}.mp4"
-        output_filename = f"SmartShort_{clip['id']}_{safe_title}.mp4"
+        raw_buffer_file = get_data_path("temp", f"network_chunk_buffer_{clip['id']}.mp4")
+        output_filename = get_data_path("outputs", f"SmartShort_{clip['id']}_{safe_title}.mp4")
         
         # Pull only the required raw video frames down from the web layer
         download_selective_range(video_url, raw_buffer_file, start_sec, end_sec)
@@ -465,7 +475,7 @@ def run_production_clipper(json_data):
 
         # Audio Extraction Pipeline Patch
         print("[*] Performing sound track mapping extraction pass...")
-        temp_audio = f"temp_audio_{clip['id']}.wav"
+        temp_audio = get_data_path("temp", f"temp_audio_{clip['id']}.wav")
         joined_track.audio.write_audiofile(temp_audio, fps=16000, logger=None)
         
         # STYLISTIC HINGLISH EXAMPLES PREVENT ENCODING HALLUCINATIONS
