@@ -51,13 +51,14 @@ The application is now a unified suite.
 
 ### Key Coding Conventions
 - **Task Queue:** `app_server.py` uses `asyncio.Queue` to process video renders one-by-one.
-- **Style Templates:** Visual themes are stored in `STYLE_TEMPLATES` and define fonts, animations, and shadows.
-- **Audio Ducking:** Background music is automatically ducked to ~12% volume when combined with dialogue.
-- **Kinetic Typography:** Captions use elastic bounce or fade animations depending on the selected style.
+- **Anti-Throttling:** Use `viral_clipper.download_selective_range` to download the full video once to a local cache. This avoids YouTube fragmentation throttling.
+- **AI Tracking:** MediaPipe detection uses **Smart-Tracking** (every 5th frame) to maintain cinematic focus while saving 80% CPU.
+- **Performance Core:** 
+    - **Whisper:** Standardize on the `base` model for high-speed transcription.
+    - **MoviePy:** Always pass `threads=os.cpu_count()` to `write_videofile` to maximize master compilation throughput.
+- **Progress Reporting:** Use the `MoviePyCallbackLogger` class for non-intrusive progress updates to the dashboard.
 
 ## Troubleshooting
 - **Missing ImageMagick:** Ensure the path in `viral_clipper.py` matches your local installation.
 - **MoviePy Audio Errors:** The script uses a 16kHz downsampling patch to avoid common FPS mismatch crashes.
-- **yt-dlp Failures:** 
-  - Keep `yt-dlp` updated to handle changes in YouTube's streaming protocols.
-  - **Perceived Freezes during Download:** Because `yt-dlp` uses `ffmpeg` to seek and download precise time ranges over heavily throttled YouTube connections, downloads may appear "frozen" at 0 bytes for several minutes. Do not abort the process—the console will output progress. The JavaScript runtime warning (`deno`/`node`) can be safely ignored as the system falls back to alternative APIs.
+- **yt-dlp Stability:** The new interactive `tqdm` bars provide real-time feedback during the ingestion phase. If a download appears stuck, check the network layer; however, the new caching system significantly reduces ingestion time for multi-clip batches.

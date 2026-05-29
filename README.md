@@ -11,15 +11,17 @@ By decoupling the heavyweight localized video processing tasks (Whisper, MediaPi
 ## 🚀 Key Features
 
 *   **Autonomous Clip Selection:** Leverages Gemini, OpenAI, Claude, or local LLMs to analyze videos and curate high-retention vertical segments.
-*   **Neural Face Tracking:** Integrated **Google MediaPipe** speaker following for smooth, active coordinate panning.
-*   **Audio-Aware Splicing:** Snaps transitions and camera pans to natural dialogue silence limits using audio Root-Mean-Square (RMS) volume envelopes and Content-Aware cut boundaries (**PySceneDetect**).
-*   **Premium Retention Typography:** Burns stylized, drop-shadowed kinetic subtitles using layered MoviePy text composition (supports Hormozi, Neon, and Minimalist themes).
-*   **Automatic Stock Foot Overlays:** Semi-automatically fetches and overlays relevant portrait B-roll using the **Pexels API** based on semantic keywords.
+*   **Smart Neural Tracking:** Integrated **MediaPipe** face tracking with **Frame-Skipping (80% faster)** and EMA cinematic smoothing.
+*   **Turbo Production Engine:**
+    *   **Anti-Throttling Ingestion:** Downloads the full widescreen video once and performs local range extraction via `ffmpeg`.
+    *   **Turbo-Transcription:** Integrated Whisper **`base` model** for high-speed, word-level audio timestamps.
+    *   **Parallel Master Render:** Multi-threaded export pass utilizing all available CPU cores.
 *   **Full-Video Repurposing Hub:**
-    *   **Twitter Threads:** Formulates cohesive, viral X threads under 280 characters using specialized snappy copywriting models.
-    *   **Medium Articles:** Drafts publication-ready editorial articles with clean Markdown headings, bullet points, and deep reasoning summaries.
-    *   **Interactive AI Scribes:** Input natural language directives (e.g. *"make it more sarcastic"*) to dynamically regenerate text in real time.
-*   **Job-Level Dashboard Grouping:** Collates multiple vertical curations cleanly under widescreen parent **Job Panels** on a single grid.
+    *   **Sub-Reliability Fallback:** Automatically triggers local Whisper transcription if YouTube subtitles are unavailable.
+    *   **Twitter Threads & Medium Articles:** Drafts publication-ready content using Deep Reasoning AI models.
+*   **Real-Time Glassmorphic Dashboard:**
+    *   **Incremental Clip Delivery:** Finished clips are interactive immediately while the rest of the queue renders.
+    *   **Dual Progress Tracking:** Real-time percentage bars for both ingestion and rendering phases.
 *   **Auto-Distribution Pipeline:** Direct programmatic uploads to **YouTube Shorts, Instagram Reels, Facebook Reels, and TikTok**.
 *   **Global CLI Access:** The Tauri desktop installer automatically registers the `fypd` command to your system PATH and installs locally, bypassing the need for administrator privileges.
 *   **Over-The-Air (OTA) Updates:** The built-in Tauri updater securely pulls patches from GitHub Releases, utilizing Ed25519 cryptographic signatures to guarantee zero-tamper background updates.

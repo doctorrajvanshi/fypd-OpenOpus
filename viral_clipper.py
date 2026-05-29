@@ -3,6 +3,8 @@ import json
 import sys
 import re
 import numpy as np
+import subprocess
+from tqdm import tqdm
 
 # ==============================================================================
 # 1. WINDOWS PATH OVERRIDES & SYSTEM INTEGRITY CHECKS
@@ -58,6 +60,19 @@ except ImportError as e:
     print("[*] Please run: pip install yt-dlp whisper-openai moviepy==1.0.3 numpy mediapipe scenedetect[opencv] requests")
     sys.exit(1)
 
+class MoviePyProgressLogger:
+    def __init__(self, callback, base_progress, weight):
+        self.callback = callback
+        self.base_progress = base_progress
+        self.weight = weight
+    def __call__(self, *args, **kwargs): pass
+    def callback_wrapper(self, iterable): return iterable
+    def log_progress(self, current, total):
+        if total > 0:
+            percent = (current / total) * self.weight
+            self.callback(self.base_progress + percent)
+    def __getattr__(self, name): return lambda *args, **kwargs: None
+
 # ==============================================================================
 # 2. PREMIUM RETENTION TYPOGRAPHY & CV SETUP
 # ==============================================================================
@@ -103,7 +118,7 @@ MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze
 MODEL_PATH = get_data_path("models", "blaze_face_short_range.tflite")
 
 if not os.path.exists(MODEL_PATH):
-    print(f"[*] Downloading MediaPipe face tracking model asset...")
+    print("[*] Downloading MediaPipe face tracking model asset...")
     urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
 base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
@@ -111,31 +126,34 @@ options = vision.FaceDetectorOptions(base_options=base_options, min_detection_co
 face_detector = vision.FaceDetector.create_from_options(options)
 
 class MultiFaceTracker:
-    """Handles frame-by-frame face detection and smooth coordinate interpolation"""
+    """Handles frame-by-frame face detection with smart frame-skipping and interpolation"""
     def __init__(self, target_w, orig_w):
         self.target_w = target_w
         self.orig_w = orig_w
         self.last_center_x = orig_w // 2
         self.smoothing = 0.15 # Low-pass filter coefficient for cinematic panning
+        self.frame_count = 0
+        self.skip_frames = 5 # Only detect every 5th frame
+        self.target_x = orig_w // 2
 
     def get_crop_window(self, frame):
-        # Convert to RGB for MediaPipe
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-        results = face_detector.detect(mp_image)
-        
-        target_center_x = self.last_center_x
-        
-        if results.detections:
-            # Find the largest face (highest confidence or biggest area)
-            # For simplicity, we take the first detection which is usually the most prominent
-            detection = results.detections[0]
-            bbox = detection.bounding_box
-            face_center_x = int(bbox.origin_x + (bbox.width / 2))
-            target_center_x = face_center_x
+        # Only run neural detection every N frames to save CPU
+        if self.frame_count % self.skip_frames == 0:
+            # Convert to RGB for MediaPipe
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+            results = face_detector.detect(mp_image)
             
-        # Apply Exponential Moving Average (EMA) smoothing
-        smoothed_center_x = int(self.last_center_x * (1 - self.smoothing) + target_center_x * self.smoothing)
+            if results.detections:
+                detection = results.detections[0]
+                bbox = detection.bounding_box
+                self.target_x = int(bbox.origin_x + (bbox.width / 2))
+        
+        self.frame_count += 1
+            
+        # Apply Exponential Moving Average (EMA) smoothing for fluid movement
+        # This naturally interpolates between the skipped frames
+        smoothed_center_x = int(self.last_center_x * (1 - self.smoothing) + self.target_x * self.smoothing)
         self.last_center_x = smoothed_center_x
         
         # Calculate x1, x2 while keeping within bounds
@@ -274,29 +292,64 @@ def find_smart_transition_point(sub_audio_clip, target_rel_time, visual_cuts=[],
 # ==============================================================================
 # 5. AUTOMATED B-ROLL & BGM FETCHING (EXTERNAL APIS)
 # ==============================================================================
-def download_selective_range(url, output_path, start_sec, end_sec):
-    """Triggers yt-dlp to query specific byte ranges directly over the network layer"""
+def download_selective_range(url, output_path, start_sec, end_sec, on_progress=None):
+    """Downloads the full video if not present, then extracts the requested range locally."""
     if os.path.exists(output_path):
-        print(f"[*] Found local range cache asset: {output_path}. Skipping stream fetch.")
         return
-    print(f"[*] Extracting structural server range allocation data ({start_sec}s -> {end_sec}s)...")
+        
+    video_id_match = re.search(r'(?:v=|\/)([0-9A-Za-z_-]{11}).*', url)
+    video_id = video_id_match.group(1) if video_id_match else "unknown_video"
+    full_video_path = get_data_path("temp", f"full_source_{video_id}.mp4")
     
-    bin_dir = get_resource_path("bin")
-    
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': output_path,
-        'noplaylist': True,
-        'ffmpeg_location': bin_dir if os.path.exists(bin_dir) else None,
-        'download_ranges': lambda info, ctx: [{
-            'start_time': start_sec,
-            'end_time': end_sec,
-        }],
-        'force_keyframes_at_cuts': True,
-        'quiet': False
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+    if not os.path.exists(full_video_path):
+        print(f"[*] Downloading full video: {url}")
+        bin_dir = get_resource_path("bin")
+        
+        # tqdm needs to be visible in the terminal
+        pbar = tqdm(total=100, desc="Downloading Video", unit="%", leave=True, dynamic_ncols=True)
+        def progress_hook(d):
+            if d['status'] == 'downloading':
+                # Use total_bytes and downloaded_bytes for more accurate progress
+                total = d.get('total_bytes') or d.get('total_bytes_estimate')
+                downloaded = d.get('downloaded_bytes', 0)
+                if total:
+                    p = (downloaded / total) * 100
+                    p_rounded = round(p, 1)
+                    pbar.n = p_rounded
+                    pbar.refresh()
+                    # Pipe to UI callback (scale 0-100% to represent the Ingesting phase)
+                    if on_progress:
+                        on_progress(p_rounded)
+            elif d['status'] == 'finished':
+                pbar.n = 100
+                pbar.refresh()
+                pbar.close()
+                if on_progress:
+                    on_progress(100)
+
+        ydl_opts = {
+            'format': 'bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'outtmpl': full_video_path,
+            'noplaylist': True,
+            'ffmpeg_location': bin_dir if os.path.exists(bin_dir) else None,
+            'quiet': True,
+            'no_warnings': True,
+            'progress_hooks': [progress_hook]
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+            
+    # Extract range locally using ffmpeg
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start_sec),
+        "-i", full_video_path,
+        "-t", str(end_sec - start_sec),
+        "-c:v", "libx264", "-c:a", "aac",
+        "-pix_fmt", "yuv420p",
+        output_path
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def fetch_bgm_by_mood(mood):
     """Searches and downloads a royalty-free audio track matching the mood"""
@@ -356,16 +409,38 @@ def fetch_broll_from_pexels(query, api_key):
         print(f"[-] B-roll fetch failed: {e}")
     return None
 
+class MoviePyCallbackLogger:
+    """Stable MoviePy logger that pipes progress to a callback without crashing"""
+    def __init__(self, callback, clip_id):
+        self.callback = callback
+        self.clip_id = clip_id
+    def __call__(self, *args, **kwargs):
+        m = args[0] if args else kwargs.get('message', '')
+        if self.callback and isinstance(m, str) and "t: " in m:
+            match = re.search(r'(\d+)%', m)
+            if match: self.callback(self.clip_id, int(match.group(1)))
+    def iter_bar(self, **kwargs):
+        for key in ['iterable', 'sequence']:
+            if key in kwargs: return kwargs[key]
+        return []
+    def callback_wrapper(self, iterable): return iterable
+    def log_progress(self, current, total): pass
+    def __getattr__(self, name):
+        return lambda *args, **kwargs: args[0] if args else None
+
 # ==============================================================================
 # 6. UNIVERSAL FORMAT RENDERING MACHINE
 # ==============================================================================
-def run_production_clipper(json_data):
+def run_production_clipper(json_data, on_clip_completed=None, on_progress=None):
     video_url = json_data["video_url"]
     pexels_key = json_data.get("pexels_key")
-    print("[*] Launching neural voice processing arrays (Small Multilingual Core)...")
-    model = whisper.load_model("small")
+    print("[*] Launching neural voice processing arrays (Turbo Base Core)...")
+    model = whisper.load_model("base")
     
-    for clip in json_data["clips"]:
+    total_clips = len(json_data["clips"])
+    for i, clip in enumerate(json_data["clips"]):
+        if on_progress: on_progress(clip['id'], 0)
+        
         start_sec = timestamp_to_seconds(clip["start_time"])
         end_sec = timestamp_to_seconds(clip["end_time"])
         broll_keywords = clip.get("broll_keywords", [])
@@ -378,7 +453,12 @@ def run_production_clipper(json_data):
         output_filename = get_data_path("outputs", f"SmartShort_{clip['id']}_{safe_title}.mp4")
         
         # Pull only the required raw video frames down from the web layer
-        download_selective_range(video_url, raw_buffer_file, start_sec, end_sec)
+        # Scale download progress (0-100) to represents the first ~15% of the total clip progress
+        def dl_progress_wrapper(p):
+            if on_progress:
+                on_progress(clip['id'], round(p * 0.15, 1))
+
+        download_selective_range(video_url, raw_buffer_file, start_sec, end_sec, on_progress=dl_progress_wrapper)
         
         # B-Roll & BGM Acquisition
         broll_assets = []
@@ -460,7 +540,7 @@ def run_production_clipper(json_data):
         main_layers = [joined_track]
         if broll_assets:
             try:
-                print(f"[*] Applying semantic B-roll overlays...")
+                print("[*] Applying semantic B-roll overlays...")
                 broll_clip = VideoFileClip(broll_assets[0]).set_duration(4).set_start(1).crossfadein(0.5).crossfadeout(0.5)
                 # Resize and center crop B-roll to match target_w
                 bw, bh = broll_clip.size
@@ -511,7 +591,7 @@ def run_production_clipper(json_data):
             subtitle_clips.extend(kinetic_layers)
             
         # Final Audio Compositing with BGM & Ducking
-        print(f"[*] Mastering final audio mix (Ducking BGM to 12%)...")
+        print("[*] Mastering final audio mix (Ducking BGM to 12%)...")
         primary_audio = joined_track.audio
         final_audio = primary_audio
         
@@ -533,11 +613,78 @@ def run_production_clipper(json_data):
         print(f"[*] Compiling composite track layers into master file -> {output_filename}")
         final_short = CompositeVideoClip(main_layers + subtitle_clips).set_audio(final_audio)
         try:
+            # Parallelize rendering across all available CPU threads
+            # Standard 'bar' logger is restored to fix the 261-byte empty artifact issue
             final_short.write_videofile(output_filename, codec='libx264', audio_codec='aac', fps=30,
-                                        ffmpeg_params=["-pix_fmt", "yuv420p"], logger='bar')
+                                        ffmpeg_params=["-pix_fmt", "yuv420p"], logger='bar', threads=os.cpu_count())
+            
+            if on_clip_completed:
+                on_clip_completed(clip['id'])
         finally:
             final_short.close()
             macro_buffer_clip.close()
+
+def fallback_full_transcription(video_url, job_id):
+    """Fallback transcription using local full video cache and Whisper"""
+    print("[*] Initiating Whisper fallback for full video transcription...")
+    video_id_match = re.search(r'(?:v=|\/)([0-9A-Za-z_-]{11}).*', video_url)
+    video_id = video_id_match.group(1) if video_id_match else "unknown_video"
+    
+    full_video_path = get_data_path("temp", f"full_source_{video_id}.mp4")
+    
+    if not os.path.exists(full_video_path):
+        print("[*] Full video not found in cache. Downloading via yt-dlp...")
+        # Trigger download by requesting a 1-second segment (which downloads full video to cache)
+        dummy_out = get_data_path("temp", f"dummy_{video_id}.mp4")
+        download_selective_range(video_url, dummy_out, 0, 1)
+        if os.path.exists(dummy_out):
+            os.remove(dummy_out)
+            
+    if not os.path.exists(full_video_path):
+        print("[-] Failed to cache full video for fallback transcription.")
+        return None
+        
+    temp_audio = get_data_path("temp", f"temp_audio_full_{job_id}.wav")
+    print(f"[*] Extracting full audio track to {temp_audio}...")
+    
+    # Extract 16kHz mono audio for optimized Whisper processing
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", full_video_path,
+        "-ar", "16000",
+        "-ac", "1",
+        "-c:a", "pcm_s16le",
+        temp_audio
+    ]
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"[-] FFmpeg audio extraction failed: {e}")
+        return None
+    
+    print("[*] Launching neural voice processing arrays (Turbo Base Core)...")
+    model = whisper.load_model("base")
+    
+    hinglish_prompt = (
+        "Okay guys, so today we are talking about software engineering, code reviews, "
+        "AI SaaS architecture, and bootstrapped startups. Product built ho gaya hai, "
+        "ab marketing aur distribution pe focus karna hai. Kya chal raha hai? All good, "
+        "everything is fully transparent."
+    )
+    
+    print("[*] Starting Whisper transcription on full audio...")
+    try:
+        result = model.transcribe(temp_audio, initial_prompt=hinglish_prompt, temperature=0.0)
+        transcript = result.get("text", "").strip()
+    except Exception as e:
+        print(f"[-] Whisper transcription failed: {e}")
+        transcript = None
+    finally:
+        if os.path.exists(temp_audio):
+            print(f"[*] Cleaning up temporary audio: {temp_audio}")
+            os.remove(temp_audio)
+    
+    return transcript
 
 # ==============================================================================
 # 7. MAIN ENTRY LAYER

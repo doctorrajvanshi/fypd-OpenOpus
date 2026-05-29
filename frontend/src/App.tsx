@@ -72,6 +72,8 @@ interface Clip {
   caption?: string;
   style?: string;
   bgm_mood?: string;
+  status?: 'pending' | 'processing' | 'completed' | 'failed';
+  progress?: number;
 }
 
 interface Job {
@@ -822,7 +824,7 @@ const App: React.FC = () => {
   );
 };
 
-const ProcessingPhaseTracker: React.FC<{ elapsedSeconds: number }> = ({ elapsedSeconds }) => {
+const ProcessingPhaseTracker: React.FC<{ elapsedSeconds: number, progress?: number }> = ({ elapsedSeconds, progress }) => {
   const phases = [
     { name: "Ingesting Media", desc: "yt-dlp establishing selective byte-range download...", minTime: 0 },
     { name: "Scene Cut Detection", desc: "PySceneDetect identifying hard visual scene changes...", minTime: 6 },
@@ -832,12 +834,17 @@ const ProcessingPhaseTracker: React.FC<{ elapsedSeconds: number }> = ({ elapsedS
     { name: "Final Video Compile", desc: "Compiling master 9:16 vertical H.264 file...", minTime: 40 }
   ];
   
+  // If we have real progress from the backend, use it to determine the active phase
   let activeIdx = phases.length - 1;
-  for (let i = 0; i < phases.length; i++) {
-    if (elapsedSeconds < phases[i].minTime) {
-      activeIdx = i - 1;
-      break;
-    }
+  if (progress !== undefined) {
+      activeIdx = Math.min(Math.floor((progress / 100) * phases.length), phases.length - 1);
+  } else {
+      for (let i = 0; i < phases.length; i++) {
+        if (elapsedSeconds < phases[i].minTime) {
+          activeIdx = i - 1;
+          break;
+        }
+      }
   }
   if (activeIdx < 0) activeIdx = 0;
   
@@ -850,7 +857,16 @@ const ProcessingPhaseTracker: React.FC<{ elapsedSeconds: number }> = ({ elapsedS
         </span>
         <span className="text-[9px] font-black tracking-widest text-white/30 tabular-nums">{elapsedSeconds}s</span>
       </div>
-      <div className="space-y-2.5">
+
+      <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden relative">
+        <motion.div 
+          initial={{ width: 0 }} 
+          animate={{ width: `${progress !== undefined ? progress : Math.min(elapsedSeconds * (100 / 120), 98)}%` }} 
+          className="absolute h-full bg-primary shadow-[0_0_15px_rgba(255,255,0,0.5)] transition-all duration-500" 
+        />
+      </div>
+
+      <div className="space-y-2.5 pt-1">
         {phases.map((p, idx) => {
           const isDone = idx < activeIdx;
           const isActive = idx === activeIdx;
@@ -1466,10 +1482,11 @@ const JobCard: React.FC<{
 }> = ({ job, clip, onOpenCinema }) => {
   const videoUrl = `${API_BASE}/videos/SmartShort_${clip.id}_${clip.title}.mp4`;
   const [elapsed, setElapsed] = useState(0);
+  const status = clip.status || job.status;
 
   useEffect(() => {
     let interval: any;
-    if (job.status === 'processing') {
+    if (status === 'processing' || (job.status === 'processing' && !clip.status)) {
       interval = setInterval(() => {
         setElapsed(prev => prev + 1);
       }, 1000);
@@ -1477,14 +1494,14 @@ const JobCard: React.FC<{
       setElapsed(0);
     }
     return () => clearInterval(interval);
-  }, [job.status]);
+  }, [status, job.status]);
 
   return (
     <motion.div layout initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }} className="group">
       <div className="bg-[#121214] rounded-[40px] overflow-hidden border border-white/5 transition-all group-hover:border-white/20 shadow-2xl group-hover:shadow-primary/5">
         
         <div className="aspect-[4/5] bg-black relative overflow-hidden border-b border-white/5">
-          {job.status === 'completed' ? (
+          {status === 'completed' ? (
             <div 
               onClick={() => onOpenCinema(videoUrl, clip.title, clip.caption || '', clip.style || 'hormozi', clip.start_time, clip.end_time, clip.bgm_mood)}
               className="relative w-full h-full cursor-pointer group/vid overflow-hidden"
@@ -1515,14 +1532,14 @@ const JobCard: React.FC<{
               <div className="relative mb-6">
                 <motion.div animate={{ scale: [1, 1.3, 1], opacity: [0.1, 0.3, 0.1] }} transition={{ repeat: Infinity, duration: 3 }} className="absolute inset-0 bg-primary/20 blur-2xl rounded-full" />
                 <div className="w-16 h-16 rounded-[24px] bg-white/5 border border-white/10 flex items-center justify-center relative z-10">
-                   <Cpu className={`w-6 h-6 ${job.status === 'failed' ? 'text-red-500' : 'text-primary'}`} />
+                   <Cpu className={`w-6 h-6 ${status === 'failed' ? 'text-red-500' : 'text-primary'}`} />
                 </div>
               </div>
-              <p className="text-[9px] font-black uppercase tracking-[0.4em] text-white/40 mb-3">{job.status === 'failed' ? 'Engine Fault' : job.status}</p>
+              <p className="text-[9px] font-black uppercase tracking-[0.4em] text-white/40 mb-3">{status === 'failed' ? 'Engine Fault' : status}</p>
               
-              {job.status === 'processing' ? (
-                <ProcessingPhaseTracker elapsedSeconds={elapsed} />
-              ) : job.status === 'failed' ? (
+              {status === 'processing' || (job.status === 'processing' && !clip.status) ? (
+                <ProcessingPhaseTracker elapsedSeconds={elapsed} progress={clip.progress} />
+              ) : status === 'failed' ? (
                 <div className="text-[8.5px] text-red-400 bg-red-500/10 border border-red-500/25 px-4.5 py-3 rounded-2xl font-bold leading-relaxed max-w-[220px] break-words">
                   {job.error || "An unknown system pipeline exception occurred."}
                 </div>
@@ -1532,8 +1549,8 @@ const JobCard: React.FC<{
             </div>
           )}
           <div className="absolute top-6 left-6 z-20">
-            <div className={`px-3 py-1.5 rounded-xl text-[8px] font-black uppercase tracking-[0.2em] backdrop-blur-md border ${job.status === 'completed' ? 'bg-green-500/10 border-green-500/30 text-green-400' : job.status === 'failed' ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-primary/10 border-primary/30 text-primary animate-pulse'}`}>
-              {job.status}
+            <div className={`px-3 py-1.5 rounded-xl text-[8px] font-black uppercase tracking-[0.2em] backdrop-blur-md border ${status === 'completed' ? 'bg-green-500/10 border-green-500/30 text-green-400' : status === 'failed' ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-primary/10 border-primary/30 text-primary animate-pulse'}`}>
+              {status}
             </div>
           </div>
         </div>
@@ -1542,7 +1559,7 @@ const JobCard: React.FC<{
           <div className="space-y-2">
             <div className="flex justify-between items-start gap-4">
                <h3 className="text-white font-black text-lg leading-tight group-hover:text-primary transition-colors line-clamp-2 uppercase italic tracking-tight">{clip.title}</h3>
-               {job.status === 'completed' && (
+               {status === 'completed' && (
                  <ExternalLink className="w-4 h-4 text-white/20 hover:text-primary cursor-pointer flex-shrink-0 transition-colors" onClick={() => window.open(videoUrl)} />
                )}
             </div>

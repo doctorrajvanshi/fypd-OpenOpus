@@ -47,7 +47,7 @@ sys.stdout = StreamToLogger(logging.getLogger('STDOUT'), logging.INFO)
 sys.stderr = StreamToLogger(logging.getLogger('STDERR'), logging.ERROR)
 import asyncio
 import uuid
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -219,11 +219,22 @@ def sanitize_filename(name: str) -> str:
 def run_clipper_sync(job_id: str, data: dict):
     """Core synchronous processing logic executed in a separate thread"""
     try:
-        # Move to output directory so files are saved there (DEPRECATED - absolute paths used now)
-        # original_cwd removed
-        
-        # Run the clipper
-        viral_clipper.run_production_clipper(data)
+        def on_clip_done(clip_id):
+            for c in jobs[job_id]["clips"]:
+                if c["id"] == clip_id:
+                    c["status"] = "completed"
+                    c["progress"] = 100
+                    break
+                    
+        def on_clip_progress(clip_id, progress):
+            for c in jobs[job_id]["clips"]:
+                if c["id"] == clip_id:
+                    c["status"] = "processing"
+                    c["progress"] = progress
+                    break
+
+        # Run the clipper with real-time feedback
+        viral_clipper.run_production_clipper(data, on_clip_completed=on_clip_done, on_progress=on_clip_progress)
         
         # Post-Processing: Direct Social Upload
         targets = data.get("publish_targets", [])
@@ -263,15 +274,18 @@ def run_clipper_sync(job_id: str, data: dict):
         if data.get("auto_repurpose"):
             print(f"[*] Autonomous full-video repurposing active for Job {job_id}...")
             video_url = data.get("video_url")
-            
-            # 1. Fetch transcript using yt-dlp subtitles
+
+            # 1. Fetch transcript (Try YouTube subtitles first, fallback to local Whisper)
             transcript = fetch_youtube_transcript(video_url, job_id)
+            if not transcript:
+                print("[*] YouTube subtitles unavailable. Activating Whisper local fallback...")
+                transcript = viral_clipper.fallback_full_transcription(video_url, job_id)
+
             if transcript:
-                print(f"[+] Subtitles retrieved successfully. Writing transcript file...")
+                print("[+] Transcript retrieved successfully. Writing transcript file...")
                 transcript_filename = os.path.join(OUTPUT_DIR, f"Job_{job_id}_full_transcript.txt")
                 with open(transcript_filename, "w", encoding="utf-8") as f:
                     f.write(transcript)
-                
                 # 2. Generate Twitter Thread
                 try:
                     t_provider = data.get("twitter_provider")
@@ -416,6 +430,12 @@ async def serve_favicon():
 async def process_video(request: ProcessRequest):
     job_id = str(uuid.uuid4())
     job_data = request.dict()
+    
+    # Initialize per-clip status tracking for real-time frontend updates
+    for clip in job_data["clips"]:
+        clip["status"] = "pending"
+        clip["progress"] = 0
+
     jobs[job_id] = {
         "id": job_id,
         "status": "queued",
@@ -566,7 +586,12 @@ async def repurpose_full_video(request: FullRepurposeRequest):
             # Otherwise, harvest subtitles instantly via yt-dlp
             transcript = fetch_youtube_transcript(request.video_url, request.job_id)
             if not transcript:
-                raise Exception("Could not retrieve subtitles from the video. Please verify the URL or ensure subtitles/auto-captions are enabled.")
+                import viral_clipper
+                print("[*] YouTube subtitles unavailable. Activating Whisper local fallback...")
+                transcript = viral_clipper.fallback_full_transcription(request.video_url, request.job_id)
+                
+            if not transcript:
+                raise Exception("Could not retrieve subtitles from the video or local fallback. Please ensure the video has audio and is accessible.")
             
             # Save the harvested transcript
             with open(transcript_filename, "w", encoding="utf-8") as f:

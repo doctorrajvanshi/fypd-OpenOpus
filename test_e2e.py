@@ -248,30 +248,73 @@ def test_process_queue():
         fail("/process job enqueue", str(e))
         return
 
-    # Poll for status transition (queued → processing or completed/failed).
-    # Use a generous window: the queue is sequential so this job may sit behind
-    # an earlier processing job for the full download+whisper cycle.
+    # Poll for status transition (queued → processing → completed).
+    # We now wait for the FULL production cycle to finish.
     try:
-        deadline = time.time() + 90  # extended to 90s for sequential queue
+        # 120s timeout to allow for download + render of a small clip
+        deadline = time.time() + 180 
         last_status = "queued"
+        print("    [*] Waiting for engine to complete production (polling /jobs)...")
+        
         while time.time() < deadline:
             r = requests.get(f"{BASE}/jobs", timeout=5)
             jobs = r.json()
             if job_id in jobs:
-                last_status = jobs[job_id]["status"]
-                if last_status in ("processing", "completed", "failed"):
-                    break
-            time.sleep(2)
+                job_state = jobs[job_id]
+                last_status = job_state["status"]
+                
+                # Check for incremental progress if available
+                p = job_state["clips"][0].get("progress", 0)
+                if last_status == "processing":
+                    print(f"    [*] Progress: {p}%", end="\r")
 
-        if last_status in ("processing", "completed", "failed"):
-            ok(f"Job status transitioned to '{last_status}' within 90s")
-        elif last_status == "queued":
-            # Acceptable: prior job is still occupying the single worker
-            ok(f"Job correctly held in 'queued' state (sequential worker busy)")
+                if last_status in ("completed", "failed"):
+                    print() # New line after carriage return
+                    break
+            time.sleep(3)
+
+        if last_status == "completed":
+            ok(f"Job successfully COMPLETED within timeline")
+            return job_id, MOCK_PROCESS_PAYLOAD["clips"][0]
+        elif last_status == "failed":
+            fail("Job failed in pipeline", f"Engine reported 'failed' state.")
         else:
-            fail("Job status transition", f"Unexpected status '{last_status}' after 90s")
+            fail("Job timeout", f"Job stuck in '{last_status}' after 180s")
     except Exception as e:
         fail("Job status polling", str(e))
+    return None, None
+
+# ──────────────────────────────────────────────
+# Layer 7 — File System Integrity
+# ──────────────────────────────────────────────
+def test_file_integrity(job_id, clip_meta):
+    section("Layer 7 — Production Artifact Verification")
+    if not job_id or not clip_meta:
+        skip("Artifact verification", "No successful job to verify")
+        return
+
+    import os
+    # Resolve the data directory (must match app_server logic)
+    base = os.environ.get("FYPD_DATA_DIR") or os.path.join(
+        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "fypd"
+    )
+    
+    # Sanitize title to match filename generation
+    from app_server import sanitize_filename
+    safe_title = sanitize_filename(clip_meta['title'])
+    filename = f"SmartShort_{clip_meta['id']}_{safe_title}.mp4"
+    output_path = os.path.join(base, "outputs", filename)
+
+    print(f"    [*] Checking artifact: {output_path}")
+    
+    if os.path.exists(output_path):
+        size = os.path.getsize(output_path)
+        if size > 100000: # Standard vertical clip should be > 100KB
+            ok(f"Verified master artifact exists ({size/1024/1024:.2f} MB)")
+        else:
+            fail("Empty artifact detected", f"File exists but is too small ({size} bytes). Likely a render failure.")
+    else:
+        fail("Missing artifact", f"Expected file not found at: {output_path}")
 
 # ──────────────────────────────────────────────
 # Layer 5 — Python Core Unit Tests
@@ -407,6 +450,64 @@ def test_social_stubs():
 # ──────────────────────────────────────────────
 # Main runner
 # ──────────────────────────────────────────────
+# ──────────────────────────────────────────────
+# Layer 8 — Repurposing Engine Fallback
+# ──────────────────────────────────────────────
+def test_repurpose_fallback(job_id):
+    section("Layer 8 — Repurposing Engine & Fallback")
+    if not job_id:
+        skip("Repurpose verification", "No successful job to verify")
+        return
+
+    # Mock request for full repurpose
+    payload = {
+        "job_id": job_id,
+        "video_url": MOCK_PROCESS_PAYLOAD["video_url"],
+        "twitter_provider": "openrouter",
+        "twitter_model": "google/gemini-2.0-flash-001",
+        "twitter_key": "sk-or-v1-...", # Not actually needed for this pass if we just check logic
+        "medium_provider": "openrouter",
+        "medium_model": "google/gemini-2.0-flash-001",
+        "medium_key": "sk-or-v1-..."
+    }
+
+    try:
+        # We'll check if the transcript file exists first. 
+        # If it doesn't, we'll hit the endpoint which triggers the fallback.
+        print("    [*] Triggering full-video repurpose (this may invoke Whisper fallback)...")
+        r = requests.post(f"{BASE}/repurpose/full", json=payload, timeout=300)
+        
+        # Verify artifacts on disk regardless of 200/500 (since AI might fail without keys)
+        import os
+        base = os.environ.get("FYPD_DATA_DIR") or os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "fypd"
+        )
+        transcript_path = os.path.join(base, "outputs", f"Job_{job_id}_full_transcript.txt")
+        
+        if os.path.exists(transcript_path) and os.path.getsize(transcript_path) > 0:
+            ok(f"Verified full transcript generated ({os.path.getsize(transcript_path)} bytes)")
+            if r.status_code != 200:
+                print(f"    [!] Note: AI generation failed (expected without keys), but core fallback logic PASSED.")
+        else:
+            if r.status_code == 200:
+                fail("Missing transcript", f"Endpoint returned 200 but file not found: {transcript_path}")
+            else:
+                fail("Repurpose failure", f"Status {r.status_code}: {r.text}")
+
+    except Exception as e:
+        # It's expected to fail if no AI keys are provided, but the transcript SHOULD be generated before that.
+        # Wait, the endpoint gathers results from gather(). If AI fails, the endpoint fails.
+        # So we check if the transcript file was at least created.
+        import os
+        base = os.environ.get("FYPD_DATA_DIR") or os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "fypd"
+        )
+        transcript_path = os.path.join(base, "outputs", f"Job_{job_id}_full_transcript.txt")
+        if os.path.exists(transcript_path):
+            ok(f"Verified full transcript generated even if AI gathering failed ({os.path.getsize(transcript_path)} bytes)")
+        else:
+            fail("Repurposing logic", str(e))
+
 def main():
     parser = argparse.ArgumentParser(description="fypd E2E Test Suite")
     parser.add_argument("--gemini-key", default=None, help="Gemini API key (enables live LLM tests)")
@@ -421,9 +522,11 @@ def main():
     test_server_health()
     test_model_fetch(args.gemini_key)
     orch_result = test_orchestrate(args.gemini_key)
-    test_process_queue()
+    job_id, clip_meta = test_process_queue()
     test_python_core()
     test_social_stubs()
+    test_file_integrity(job_id, clip_meta)
+    test_repurpose_fallback(job_id)
 
     # ── Summary ──
     total = passed + failed + skipped
