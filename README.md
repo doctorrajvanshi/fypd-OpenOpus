@@ -87,3 +87,5 @@ python app_server.py
 
 ## 📄 License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Built by Dr. Ankit Rajvanshi, founder of [DraftLC (AI-powered LC drafting platform)](https://draftlc.com). Originally prototyped for repurposing trade finance video content.
