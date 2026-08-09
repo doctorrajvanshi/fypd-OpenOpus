@@ -24,8 +24,7 @@ dist/
 dist_frontend/
 *.spec
 crash_log.txt
-test_server.log
-test_server_err.log
+*.log
 implementation.md
 walkthrough.md
 task.md

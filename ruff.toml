@@ -1,0 +1,30 @@
+# Ruff configuration for the fypd Python backend.
+#
+# The selected rules are the pyflakes correctness set plus whitespace hygiene —
+# enough to catch dead code, undefined names and unused imports without forcing
+# a rewrite of the pipeline's deliberately broad `except Exception` handlers
+# (the render loop must survive one bad clip without killing the whole job).
+
+line-length = 120
+
+[lint]
+select = [
+    "E4",  # import formatting
+    "E7",  # statement-level style (multiple statements per line, bare except)
+    "E9",  # syntax / IO errors
+    "F",   # pyflakes: unused imports, undefined names, dead locals
+    "W",   # whitespace
+]
+
+[lint.per-file-ignores]
+# Import order in these two modules is load-bearing, not stylistic:
+#
+# app_server.py must install its logging handlers and redirect sys.stdout /
+# sys.stderr before importing litellm and viral_clipper, otherwise those
+# libraries' import-time output bypasses the log file entirely.
+#
+# viral_clipper.py must resolve and export IMAGEMAGICK_BINARY before importing
+# moviepy, because moviepy.config reads that variable exactly once at import.
+# Moving those imports to the top silently breaks caption rendering.
+"app_server.py" = ["E402"]
+"viral_clipper.py" = ["E402"]

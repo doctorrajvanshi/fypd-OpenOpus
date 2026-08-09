@@ -1,17 +1,21 @@
 yt-dlp>=2023.11.16
 openai-whisper>=20231117
 moviepy==1.0.3
-numpy>=1.24.0
+proglog>=0.1.10
+numpy>=1.24.0,<2.0.0
 textwrap3
-fastapi
-uvicorn
+fastapi>=0.110,<1.0
+uvicorn>=0.27,<1.0
+pydantic>=2.0,<3.0
+python-dotenv>=1.0
 mediapipe==0.10.35
 protobuf==5.29.6
 scenedetect[opencv]
-requests
+requests>=2.31
 google-api-python-client
 google-auth-oauthlib
 pyngrok
 playwright
-litellm>=1.35.0
-# Note: ImageMagick must be installed on your system (magick.exe on Windows)
+litellm>=1.35.0,<2.0
+# Note: FFmpeg and ImageMagick must be installed on your system.
+# On Windows the Tauri installer bundles both; see README for manual setup.
