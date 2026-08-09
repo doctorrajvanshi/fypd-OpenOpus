@@ -86,11 +86,16 @@ IMAGEMAGICK_BINARY=C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe
 
 ## 💻 Usage
 
-Start the unified server using the main runner:
+Build the dashboard once, then start the unified server:
 ```bash
+# Build the React dashboard into dist_frontend/ (one time, and after UI changes)
+cd frontend && npm install && npm run build && cd ..
+
 python app_server.py
 ```
-1.  The browser will automatically launch to `http://127.0.0.1:8000`.
+*The desktop app ships the dashboard prebuilt — this step is only for running from source.*
+
+1.  The browser will automatically launch to `http://127.0.0.1:8000`. (The desktop app renders the dashboard in its own window and does not open a browser.)
 2.  Open **System Configuration** to set your API Keys (Gemini, OpenAI, Pexels) and select your **Twitter** and **Medium** writing models (supports local Ollama/LM Studio proxies!).
 3.  Paste a YouTube URL and click **Orchestrate**. 
 4.  Jobs are queued sequentially in the background worker queue. Sit back and watch your Content Factory render widescreen streams into short clips, tweets, and articles!

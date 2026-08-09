@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Runs on every branch, not just main: work lands on feature branches long
+  # before a PR exists, and a workflow that only triggers on main gives no
+  # signal until after merge.
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 

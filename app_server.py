@@ -513,15 +513,30 @@ async def health():
 
 @app.get("/")
 async def serve_ui():
-    if os.path.exists(os.path.join(FRONTEND_DIR, "index.html")):
-        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
-    return FileResponse(os.path.join(BASE_DIR, "index.html"))
+    index = os.path.join(FRONTEND_DIR, "index.html")
+    if os.path.exists(index):
+        return FileResponse(index)
+    # There used to be a second, hand-written dashboard at the repo root that
+    # was served here. It duplicated the React app (including its own API-key
+    # handling) and drifted out of sync, so it was removed. Tell the user how
+    # to build the real one rather than returning a FileResponse for a path
+    # that does not exist.
+    raise HTTPException(
+        status_code=503,
+        detail="Dashboard not built. Run 'npm install && npm run build' in the frontend/ "
+               "directory, then reload this page. (The desktop app ships the dashboard "
+               "prebuilt and does not need this step.)"
+    )
 
 @app.get("/favicon.svg")
 async def serve_favicon():
-    if os.path.exists(os.path.join(FRONTEND_DIR, "favicon.svg")):
-        return FileResponse(os.path.join(FRONTEND_DIR, "favicon.svg"))
-    return FileResponse(os.path.join(BASE_DIR, "frontend/public/favicon.svg"))
+    for candidate in (
+        os.path.join(FRONTEND_DIR, "favicon.svg"),
+        os.path.join(BASE_DIR, "frontend", "public", "favicon.svg"),
+    ):
+        if os.path.exists(candidate):
+            return FileResponse(candidate)
+    raise HTTPException(status_code=404, detail="favicon not found")
 
 def dump_model(model: BaseModel) -> dict:
     """Serialize a Pydantic model across v1 and v2."""
@@ -749,8 +764,12 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[-] Dependency check failed: {e}")
 
-        # Open the browser to the local server address
-        Timer(1.5, lambda: webbrowser.open(f"http://{HOST}:{PORT}")).start()
+        # Open the browser to the local server address — but only in standalone
+        # mode. Under Tauri the dashboard already lives in the app's own webview,
+        # and a second browser window would open on a page this process cannot
+        # serve (the frontend bundle is compiled into the desktop binary).
+        if os.environ.get("FYPD_LAUNCHED_BY") != "tauri":
+            Timer(1.5, lambda: webbrowser.open(f"http://{HOST}:{PORT}")).start()
         uvicorn.run(app, host=HOST, port=PORT)
     except Exception as e:
         with open(CRASH_LOG, "w") as f:

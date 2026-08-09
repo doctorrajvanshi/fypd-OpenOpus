@@ -1,16 +1,26 @@
 """
-fypd End-to-End Test Suite
-===========================
-Tests the full pipeline in layers:
-  Layer 1 — Server health & static routes
-  Layer 2 — /models/fetch for each provider type
-  Layer 3 — /orchestrate (LLM JSON generation)
-  Layer 4 — /process  (job queuing + status polling)
-  Layer 5 — Python core unit tests (filename sanitizer, timestamp parser,
-             phrase grouper, elastic bounce, smart transition)
-  Layer 6 — social_publisher stubs (no real credentials needed)
+fypd Integration Test Harness (manual)
+======================================
+Exercises the running system end to end against a live server and the real
+media toolchain. It downloads a video, renders a clip and hits provider APIs,
+so it needs FFmpeg, ImageMagick, the full Python stack and (optionally) an API
+key. That makes it too slow and too network-dependent for CI — run it by hand
+against a real install:
 
-Run: python test_e2e.py [--gemini-key YOUR_KEY]
+    python app_server.py          # in one terminal
+    python test_e2e.py            # in another
+    python test_e2e.py --gemini-key YOUR_KEY   # to include live LLM layers
+
+Pure-logic unit tests live in tests/test_core.py and DO run in CI
+(`pytest tests/`). Do not duplicate them here.
+
+Layers:
+  1 — Server health & static routes
+  2 — /models/fetch for each provider type
+  3 — /orchestrate (LLM JSON generation)
+  4 — /process (job queuing, progress polling, full render)
+  6 — social_publisher stubs (no real credentials needed)
+  7 — Production artifact verification on disk
 """
 
 import sys
@@ -216,7 +226,7 @@ MOCK_PROCESS_PAYLOAD = {
     "clips": [
         {
             "id": 99901,
-            "title": "Test_Clip_E2E",   # clean title — illegal char stripping verified in Layer 5 unit tests
+            "title": "Test_Clip_E2E",   # clean title — illegal char stripping covered by tests/test_core.py
             "start_time": "00:00:05",
             "end_time": "00:00:20",
             "caption": "Test caption 🚀",
@@ -312,98 +322,6 @@ def test_file_integrity(job_id, clip_meta):
             fail("Empty artifact detected", f"File exists but is too small ({size} bytes). Likely a render failure.")
     else:
         fail("Missing artifact", f"Expected file not found at: {output_path}")
-
-# ──────────────────────────────────────────────
-# Layer 5 — Python Core Unit Tests
-# ──────────────────────────────────────────────
-def test_python_core():
-    section("Layer 5 — Python Core Unit Tests")
-
-    # Add project root to path
-    sys.path.insert(0, ".")
-
-    # ── app_server: sanitize_filename ──
-    try:
-        from app_server import sanitize_filename
-        assert sanitize_filename("Hello/World:Test") == "Hello_World_Test"
-        assert sanitize_filename('bad"name<here>') == "bad_name_here_"
-        assert sanitize_filename("normal_title") == "normal_title"
-        ok("sanitize_filename: strips /  :  *  ?  \"  <  >  |")
-    except Exception as e:
-        fail("sanitize_filename", str(e))
-
-    # ── viral_clipper: timestamp_to_seconds ──
-    try:
-        import viral_clipper as vc
-        assert vc.timestamp_to_seconds("00:01:30") == 90
-        assert vc.timestamp_to_seconds("01:00:00") == 3600
-        assert vc.timestamp_to_seconds("00:00") == 0
-        assert vc.timestamp_to_seconds("01:30") == 90
-        ok("timestamp_to_seconds: HH:MM:SS and MM:SS both parse correctly")
-    except Exception as e:
-        fail("timestamp_to_seconds", str(e))
-
-    # ── viral_clipper: clean_token ──
-    try:
-        assert vc.clean_token("hello!") == "HELLO"
-        assert vc.clean_token("UM") == ""
-        assert vc.clean_token("[NONE]") == ""
-        assert vc.clean_token(" world ") == "WORLD"
-        ok("clean_token: strips punctuation and filters filler words")
-    except Exception as e:
-        fail("clean_token", str(e))
-
-    # ── viral_clipper: elastic_bounce_transform ──
-    try:
-        s0   = vc.elastic_bounce_transform(0.0)
-        s_up = vc.elastic_bounce_transform(0.12)   # peak
-        s_1  = vc.elastic_bounce_transform(1.0)    # settled
-        assert s0 < s_up, f"Scale should rise: {s0} < {s_up}"
-        assert abs(s_1 - 1.0) < 1e-9,  f"Should settle at 1.0, got {s_1}"
-        ok(f"elastic_bounce_transform: rises ({s0:.2f}→{s_up:.2f}) then settles at 1.0")
-    except Exception as e:
-        fail("elastic_bounce_transform", str(e))
-
-    # ── viral_clipper: group_words_into_phrases (hormozi: 2 words max) ──
-    try:
-        style = {"MAX_WORDS_PER_PHRASE": 2, "MAX_GAP_SECONDS": 0.6}
-        words = [
-            {"word": "hello", "start": 0.0, "end": 0.3},
-            {"word": "world", "start": 0.4, "end": 0.7},
-            {"word": "foo",   "start": 0.8, "end": 1.0},
-        ]
-        phrases = vc.group_words_into_phrases(words, style)
-        assert len(phrases) == 2, f"Expected 2 phrases, got {len(phrases)}"
-        assert len(phrases[0]) == 2   # hello + world
-        assert len(phrases[1]) == 1   # foo
-        ok(f"group_words_into_phrases: hormozi 2-word cap produces {len(phrases)} phrases correctly")
-    except Exception as e:
-        fail("group_words_into_phrases", str(e))
-
-    # ── viral_clipper: group_words_into_phrases (gap-based split) ──
-    try:
-        style = {"MAX_WORDS_PER_PHRASE": 5, "MAX_GAP_SECONDS": 0.3}
-        words = [
-            {"word": "first",  "start": 0.0, "end": 0.2},
-            {"word": "second", "start": 0.3, "end": 0.5},   # gap=0.1 → same phrase
-            {"word": "third",  "start": 1.0, "end": 1.2},   # gap=0.5 → new phrase
-        ]
-        phrases = vc.group_words_into_phrases(words, style)
-        assert len(phrases) == 2, f"Expected 2 phrases (gap split), got {len(phrases)}"
-        ok("group_words_into_phrases: gap-based phrase splitting works correctly")
-    except Exception as e:
-        fail("group_words_into_phrases (gap split)", str(e))
-
-    # ── Fix #3 integration: title with illegal chars → valid filename ──
-    try:
-        from app_server import sanitize_filename
-        title = "Test_Clip_Sanitize/Check"
-        safe  = sanitize_filename(title)
-        import re
-        assert not re.search(r'[\\/:"*?<>|]', safe), f"Illegal chars remain: {safe}"
-        ok(f"Fix #3 integration: '{title}' → '{safe}' (no illegal chars)")
-    except Exception as e:
-        fail("Fix #3 integration", str(e))
 
 # ──────────────────────────────────────────────
 # Layer 6 — Social Publisher Stubs
@@ -522,7 +440,6 @@ def main():
     test_model_fetch(args.gemini_key)
     test_orchestrate(args.gemini_key)
     job_id, clip_meta = test_process_queue()
-    test_python_core()
     test_social_stubs()
     test_file_integrity(job_id, clip_meta)
     test_repurpose_fallback(job_id)

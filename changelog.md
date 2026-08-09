@@ -25,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - Timestamps with fractional seconds (`00:01:23.5`) raised and killed the whole job.
 - Facebook publishing tore down its tunnel after a fixed 10s, interrupting larger uploads; it now waits for the fetch to complete.
 - Instagram publish errors were swallowed, reporting success on failure.
+- **The desktop app opened a second, blank browser window.** Tauri launches `app_server.py` as a subprocess, so its `__main__` block ran `webbrowser.open()`; the tab landed on an unservable page because the frontend bundle is compiled into the desktop binary rather than shipped as a Python resource. The backend now opens a browser only in standalone mode.
 
 ### Tooling
 - **All three linters now pass and run in CI:** `ruff` (Python, configured in `ruff.toml`), `eslint` (frontend), and `cargo clippy -D warnings` plus `cargo fmt` (Tauri shell).
@@ -37,6 +38,8 @@ All notable changes to this project will be documented in this file.
 - The face tracking model is bundled and loaded lazily, so importing the engine no longer performs network I/O.
 - Duplicated Twitter/Medium prompt and generation logic consolidated into shared helpers.
 - Tauri webview CSP enabled (was `null`).
+- **Removed the legacy root `index.html` dashboard.** It duplicated the React app — including its own API-key handling and direct browser-to-Gemini calls — and was served only when `dist_frontend/` was missing. `/` now returns a 503 explaining how to build the real dashboard.
+- `test_e2e.py` is documented as the manual integration harness; its unit layer moved to `tests/test_core.py`, which runs in CI.
 
 ## [1.2.0] - 2026-05-30
 ### Added

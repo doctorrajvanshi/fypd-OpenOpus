@@ -221,7 +221,12 @@ async fn start_factory_server(app: AppHandle, state: State<'_, AppState>) -> Res
     command
         .arg(server_path)
         .current_dir(&app_dir)
-        .env("FYPD_DATA_DIR", app_dir.to_str().unwrap_or(""));
+        .env("FYPD_DATA_DIR", app_dir.to_str().unwrap_or(""))
+        // The desktop app already renders the dashboard in its own webview, so
+        // the backend must not also pop open the system browser. It used to,
+        // and the tab landed on a blank page because the frontend bundle is
+        // compiled into the binary rather than shipped as a Python resource.
+        .env("FYPD_LAUNCHED_BY", "tauri");
 
     #[cfg(target_os = "windows")]
     command.creation_flags(0x08000000); // CREATE_NO_WINDOW
