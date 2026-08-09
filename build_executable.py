@@ -1,5 +1,4 @@
 import PyInstaller.__main__
-import os
 import platform
 
 # Ensure React dist_frontend and bin folder are included in the build

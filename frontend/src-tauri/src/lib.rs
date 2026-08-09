@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use tauri::path::BaseDirectory;
@@ -28,7 +28,7 @@ async fn check_factory_status(app: AppHandle) -> Result<bool, String> {
 }
 
 /// Path to the interpreter inside the managed virtual environment.
-fn python_exe_path(app_dir: &PathBuf) -> PathBuf {
+fn python_exe_path(app_dir: &Path) -> PathBuf {
     if cfg!(target_os = "windows") {
         app_dir
             .join("python_env")

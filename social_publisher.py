@@ -119,7 +119,7 @@ class YouTubePublisher(SocialPublisher):
         if not os.path.exists(self.client_secrets_path):
             print(f"[-] YouTube Error: {self.client_secrets_path} not found.")
             return False
-            
+
         try:
             print(f"[*] Initializing YouTube OAuth flow for: {video_path}")
             flow = InstalledAppFlow.from_client_secrets_file(self.client_secrets_path, self.scopes)
@@ -140,7 +140,7 @@ class YouTubePublisher(SocialPublisher):
 
             media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
             request = youtube.videos().insert(part="snippet,status", body=request_body, media_body=media)
-            
+
             print("[*] Uploading to YouTube Shorts...")
             response = request.execute()
             print(f"[+] YouTube Success: https://youtu.be/{response['id']}")
@@ -173,7 +173,8 @@ class InstagramPublisher(SocialPublisher):
                 }
                 res = requests.post(container_url, data=payload, timeout=60).json()
                 container_id = res.get('id')
-                if not container_id: raise Exception(f"Container error: {res}")
+                if not container_id:
+                    raise Exception(f"Container error: {res}")
 
                 # 3. Poll for Processing (Wait for IG to fetch from our tunnel)
                 # Fix #5: Add a 5-minute timeout so a stalled IG job doesn't hang the worker thread.
@@ -193,8 +194,10 @@ class InstagramPublisher(SocialPublisher):
                         timeout=60
                     ).json()
                     status = status_res.get('status_code')
-                    if status == 'FINISHED': break
-                    elif status == 'ERROR': raise Exception(f"IG Processing Error: {status_res}")
+                    if status == 'FINISHED':
+                        break
+                    if status == 'ERROR':
+                        raise Exception(f"IG Processing Error: {status_res}")
                     time.sleep(5)
 
                 # 4. Publish
@@ -222,10 +225,10 @@ class TikTokPublisher(SocialPublisher):
 
     def publish(self, video_path: str, caption: str):
         from playwright.sync_api import sync_playwright
-        
+
         abs_video_path = os.path.abspath(video_path)
         print(f"[*] Initializing TikTok browser factory for: {abs_video_path}")
-        
+
         try:
             with sync_playwright() as p:
                 # Use persistent context to maintain login session
@@ -234,10 +237,10 @@ class TikTokPublisher(SocialPublisher):
                     headless=False, # TikTok often blocks headless uploads
                     args=["--disable-blink-features=AutomationControlled"]
                 )
-                
+
                 page = browser.new_page()
                 page.goto("https://www.tiktok.com/upload?lang=en", wait_until="networkidle")
-                
+
                 # Check if logged in (if not, we can't automate the login here safely)
                 if "login" in page.url:
                     print("[-] TikTok Error: User not logged in. Please use the 'Login to TikTok' button in the dashboard first.")
@@ -249,26 +252,26 @@ class TikTokPublisher(SocialPublisher):
                 # Note: TikTok uses an iframe for the upload area in some regions
                 file_input = page.wait_for_selector('input[type="file"]')
                 file_input.set_input_files(abs_video_path)
-                
+
                 print("[*] Entering caption and tags...")
                 # Wait for upload to complete and caption field to appear
                 caption_div = page.wait_for_selector('div[contenteditable="true"]')
                 page.wait_for_timeout(2000) # Wait for text to clear
                 caption_div.fill(caption + " #shorts #ai #fypd")
-                
+
                 print("[*] Finalizing post...")
                 # Click Post
                 post_btn = page.locator('button:has-text("Post")')
                 post_btn.click()
-                
+
                 # Wait for success message
                 page.wait_for_selector('text="Your video is being uploaded"', timeout=60000)
                 print("[+] TikTok Success: Video posted successfully!")
-                
+
                 page.wait_for_timeout(5000)
                 browser.close()
                 return True
-                
+
         except Exception as e:
             print(f"[-] TikTok Automation Failed: {e}")
             return False
@@ -298,7 +301,8 @@ class FacebookPublisher(SocialPublisher):
                 }
                 res = requests.post(upload_url, data=payload, timeout=60).json()
                 video_id = res.get('id')
-                if not video_id: raise Exception(f"Facebook upload error: {res}")
+                if not video_id:
+                    raise Exception(f"Facebook upload error: {res}")
 
                 # 3. Hold the tunnel open until Facebook has actually fetched the
                 # file. The old fixed 10s sleep tore it down mid-download on any

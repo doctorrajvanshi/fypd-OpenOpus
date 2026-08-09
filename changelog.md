@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 - **Startup dependency preflight** with a `/health` endpoint and a *Setup Required* banner in the dashboard, so missing FFmpeg/ImageMagick is reported in the UI instead of only in the log file.
 - **`.env` support** via `python-dotenv` — `IMAGEMAGICK_BINARY`, `HOST` and `PORT` are now actually read.
 - **Anthropic model listing** in `/models/fetch`; Claude was selectable in the UI but unsupported by the backend.
-- **CI workflow** running unit tests, a frontend typecheck/build, and a Rust format check.
+- **CI workflow** running Python lint + unit tests, a frontend lint/typecheck/build, and Rust fmt + clippy.
 - **`fypd_core.py`**, a dependency-free module of shared pure helpers, with a pytest suite.
 
 ### Fixed
@@ -25,6 +25,9 @@ All notable changes to this project will be documented in this file.
 - Timestamps with fractional seconds (`00:01:23.5`) raised and killed the whole job.
 - Facebook publishing tore down its tunnel after a fixed 10s, interrupting larger uploads; it now waits for the fetch to complete.
 - Instagram publish errors were swallowed, reporting success on failure.
+
+### Tooling
+- **All three linters now pass and run in CI:** `ruff` (Python, configured in `ruff.toml`), `eslint` (frontend), and `cargo clippy -D warnings` plus `cargo fmt` (Tauri shell).
 
 ### Changed
 - **Publishing tunnels now expose a single file, not the whole API.** `ngrok.connect(8000)` published the entire dashboard backend — `/orchestrate`, `/process`, `/jobs`, `/tiktok/login` and every rendered clip, transcript and draft under `/videos`. Uploads now run a throwaway server on an ephemeral port serving one file at one random path.

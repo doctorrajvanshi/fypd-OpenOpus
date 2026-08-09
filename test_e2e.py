@@ -14,12 +14,9 @@ Run: python test_e2e.py [--gemini-key YOUR_KEY]
 """
 
 import sys
-import json
 import time
 import argparse
 import requests
-import unittest
-import threading
 
 # Force UTF-8 on Windows terminals that default to cp1252
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
@@ -252,17 +249,17 @@ def test_process_queue():
     # We now wait for the FULL production cycle to finish.
     try:
         # 120s timeout to allow for download + render of a small clip
-        deadline = time.time() + 180 
+        deadline = time.time() + 180
         last_status = "queued"
         print("    [*] Waiting for engine to complete production (polling /jobs)...")
-        
+
         while time.time() < deadline:
             r = requests.get(f"{BASE}/jobs", timeout=5)
             jobs = r.json()
             if job_id in jobs:
                 job_state = jobs[job_id]
                 last_status = job_state["status"]
-                
+
                 # Check for incremental progress if available
                 p = job_state["clips"][0].get("progress", 0)
                 if last_status == "processing":
@@ -274,10 +271,10 @@ def test_process_queue():
             time.sleep(3)
 
         if last_status == "completed":
-            ok(f"Job successfully COMPLETED within timeline")
+            ok("Job successfully COMPLETED within timeline")
             return job_id, MOCK_PROCESS_PAYLOAD["clips"][0]
         elif last_status == "failed":
-            fail("Job failed in pipeline", f"Engine reported 'failed' state.")
+            fail("Job failed in pipeline", "Engine reported 'failed' state.")
         else:
             fail("Job timeout", f"Job stuck in '{last_status}' after 180s")
     except Exception as e:
@@ -298,7 +295,7 @@ def test_file_integrity(job_id, clip_meta):
     base = os.environ.get("FYPD_DATA_DIR") or os.path.join(
         os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "fypd"
     )
-    
+
     # Sanitize title to match filename generation
     from app_server import sanitize_filename
     safe_title = sanitize_filename(clip_meta['title'])
@@ -306,7 +303,7 @@ def test_file_integrity(job_id, clip_meta):
     output_path = os.path.join(base, "outputs", filename)
 
     print(f"    [*] Checking artifact: {output_path}")
-    
+
     if os.path.exists(output_path):
         size = os.path.getsize(output_path)
         if size > 100000: # Standard vertical clip should be > 100KB
@@ -443,6 +440,8 @@ def test_social_stubs():
     try:
         ig = InstagramPublisher("fake_token", "fake_user_id", ngrok_auth_token=None)
         fb = FacebookPublisher("fake_token", "fake_page_id", ngrok_auth_token=None)
+        assert ig.ig_user_id == "fake_user_id"
+        assert fb.page_id == "fake_page_id"
         ok("InstagramPublisher + FacebookPublisher instantiate without error")
     except Exception as e:
         fail("IG/FB Publisher instantiation", str(e))
@@ -472,22 +471,22 @@ def test_repurpose_fallback(job_id):
     }
 
     try:
-        # We'll check if the transcript file exists first. 
+        # We'll check if the transcript file exists first.
         # If it doesn't, we'll hit the endpoint which triggers the fallback.
         print("    [*] Triggering full-video repurpose (this may invoke Whisper fallback)...")
         r = requests.post(f"{BASE}/repurpose/full", json=payload, timeout=300)
-        
+
         # Verify artifacts on disk regardless of 200/500 (since AI might fail without keys)
         import os
         base = os.environ.get("FYPD_DATA_DIR") or os.path.join(
             os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "fypd"
         )
         transcript_path = os.path.join(base, "outputs", f"Job_{job_id}_full_transcript.txt")
-        
+
         if os.path.exists(transcript_path) and os.path.getsize(transcript_path) > 0:
             ok(f"Verified full transcript generated ({os.path.getsize(transcript_path)} bytes)")
             if r.status_code != 200:
-                print(f"    [!] Note: AI generation failed (expected without keys), but core fallback logic PASSED.")
+                print("    [!] Note: AI generation failed (expected without keys), but core fallback logic PASSED.")
         else:
             if r.status_code == 200:
                 fail("Missing transcript", f"Endpoint returned 200 but file not found: {transcript_path}")
@@ -521,7 +520,7 @@ def main():
 
     test_server_health()
     test_model_fetch(args.gemini_key)
-    orch_result = test_orchestrate(args.gemini_key)
+    test_orchestrate(args.gemini_key)
     job_id, clip_meta = test_process_queue()
     test_python_core()
     test_social_stubs()

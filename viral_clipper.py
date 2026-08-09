@@ -254,24 +254,26 @@ class MultiFaceTracker:
             # colour-inverted faces and missing them far more often than it should.
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(frame))
             results = get_face_detector().detect(mp_image)
-            
+
             if results.detections:
                 detection = results.detections[0]
                 bbox = detection.bounding_box
                 self.target_x = int(bbox.origin_x + (bbox.width / 2))
-        
+
         self.frame_count += 1
-            
+
         # Apply Exponential Moving Average (EMA) smoothing for fluid movement
         # This naturally interpolates between the skipped frames
         smoothed_center_x = int(self.last_center_x * (1 - self.smoothing) + self.target_x * self.smoothing)
         self.last_center_x = smoothed_center_x
-        
+
         # Calculate x1, x2 while keeping within bounds
         x1 = smoothed_center_x - (self.target_w // 2)
-        if x1 < 0: x1 = 0
-        if x1 + self.target_w > self.orig_w: x1 = self.orig_w - self.target_w
-        
+        if x1 < 0:
+            x1 = 0
+        if x1 + self.target_w > self.orig_w:
+            x1 = self.orig_w - self.target_w
+
         return x1, x1 + self.target_w
 
 # ==============================================================================
@@ -285,29 +287,29 @@ def create_kinetic_caption(text_string, start_time, duration, max_width, target_
     """Compiles clean, synchronized styled text objects with requested animations"""
     anim_type = style_config.get("ANIMATION", "bounce")
     shadow_offset = style_config.get("SHADOW_OFFSET", 4)
-    
+
     # 1. Base Layer Creation
     def get_base_clip(color, offset_y=0):
-        clip = TextClip(text_string, font=style_config["FONT"], fontsize=style_config["FONT_SIZE"], 
+        clip = TextClip(text_string, font=style_config["FONT"], fontsize=style_config["FONT_SIZE"],
                         color=color, method='caption', size=(max_width, None))
         clip = clip.set_start(start_time).set_duration(duration)
-        
+
         # Apply Animations
         if anim_type == "bounce":
             clip = clip.resize(elastic_bounce_transform).set_position(make_kinetic_slide_up(target_y, offset_y=offset_y))
         else: # minimalist / fade
             clip = clip.set_position(('center', target_y + offset_y)).crossfadein(0.2)
-            
+
         return clip
 
     layers = []
     # Background Shadow Layer (if applicable)
     if style_config["SHADOW_COLOR"] != "transparent":
         layers.append(get_base_clip(style_config["SHADOW_COLOR"], offset_y=shadow_offset))
-    
+
     # Primary Visual Face Layer
     layers.append(get_base_clip(style_config["TEXT_COLOR"]))
-    
+
     return layers
 
 # ==============================================================================
@@ -329,17 +331,17 @@ def find_smart_transition_point(sub_audio_clip, target_rel_time, visual_cuts=[],
     for cut in visual_cuts:
         if abs(cut - target_rel_time) < 0.4: # Tight threshold for visual snapping
             return cut
-            
+
     # 2. Fallback to Audio RMS Analysis
     try:
         fps = 22050  # Lightweight downsampled frequency mapping for instant indexing
         sample_start = int(max(0, target_rel_time - 0.2) * fps)
         sample_end = int(min(sub_audio_clip.duration, target_rel_time + search_window) * fps)
-        
+
         audio_frames = sub_audio_clip.to_soundarray(fps=fps)[sample_start:sample_end]
         if len(audio_frames) == 0:
             return target_rel_time
-            
+
         energy = np.sqrt(np.mean(audio_frames**2, axis=1))
         min_energy_idx = np.argmin(energy)
         return (sample_start + min_energy_idx) / fps
@@ -395,7 +397,7 @@ def download_selective_range(url, output_path, start_sec, end_sec, on_progress=N
     if not os.path.exists(full_video_path):
         print(f"[*] Downloading full video: {url}")
         bin_dir = get_resource_path("bin")
-        
+
         # tqdm needs to be visible in the terminal
         pbar = tqdm(total=100, desc="Downloading Video", unit="%", leave=True, dynamic_ncols=True)
         def progress_hook(d):
@@ -579,7 +581,8 @@ def run_production_clipper(json_data, on_clip_completed=None, on_progress=None):
     model = whisper.load_model(WHISPER_MODEL)
 
     for clip in json_data["clips"]:
-        if on_progress: on_progress(clip['id'], 0)
+        if on_progress:
+            on_progress(clip['id'], 0)
 
         start_sec = timestamp_to_seconds(clip["start_time"])
         end_sec = timestamp_to_seconds(clip["end_time"])
@@ -587,11 +590,11 @@ def run_production_clipper(json_data, on_clip_completed=None, on_progress=None):
         bgm_mood = clip.get("bgm_mood")
         style_name = clip.get("style", "hormozi").lower()
         style_config = STYLE_TEMPLATES.get(style_name, STYLE_TEMPLATES["hormozi"])
-        
+
         safe_title = sanitize_filename(clip['title'])
         raw_buffer_file = get_data_path("temp", f"network_chunk_buffer_{clip['id']}.mp4")
         output_filename = get_data_path("outputs", f"SmartShort_{clip['id']}_{safe_title}.mp4")
-        
+
         # Pull only the required raw video frames down from the web layer
         # Scale download progress (0-100) to represents the first ~15% of the total clip progress
         def dl_progress_wrapper(p):
@@ -599,23 +602,24 @@ def run_production_clipper(json_data, on_clip_completed=None, on_progress=None):
                 on_progress(clip['id'], round(p * 0.15, 1))
 
         download_selective_range(video_url, raw_buffer_file, start_sec, end_sec, on_progress=dl_progress_wrapper)
-        
+
         # B-Roll & BGM Acquisition
         broll_assets = []
         if pexels_key and broll_keywords:
             for kw in broll_keywords[:1]:
                 path = fetch_broll_from_pexels(kw, pexels_key)
-                if path: broll_assets.append(path)
-        
+                if path:
+                    broll_assets.append(path)
+
         bgm_path = fetch_bgm_by_mood(bgm_mood) if bgm_mood else None
-        
+
         # Pre-scan for visual scene changes
         visual_boundaries = find_visual_cut_points(raw_buffer_file)
-        
+
         print(f"\n[+] Isolation pass ready. Unlocking buffer window for Clip #{clip['id']}...")
         macro_buffer_clip = VideoFileClip(raw_buffer_file)
         orig_w, orig_h = macro_buffer_clip.size
-        
+
         # Fix #2: For already-portrait video (orig_w < orig_h) keep target_w = orig_w
         # so caption text_safe_width and compositor dimensions are correct.
         if orig_w < orig_h:
@@ -624,7 +628,7 @@ def run_production_clipper(json_data, on_clip_completed=None, on_progress=None):
             target_w = int(orig_h * (9 / 16))
         if target_w % 2 != 0:
             target_w -= 1  # Standard even-integer H.264 video rendering guard
-            
+
         compiled_event_clips = []
 
         timeline = clip.get("timeline") or [{"rel_start": 0, "rel_end": macro_buffer_clip.duration}]
@@ -657,37 +661,40 @@ def run_production_clipper(json_data, on_clip_completed=None, on_progress=None):
 
             crop_mode = event.get("crop_mode", "center").lower()
             zoom_factor = event.get("zoom", 1.0)
-            
+
             event_clip = macro_buffer_clip.subclip(rel_start, rel_end)
-            
+
             # Universal Orientation Splicer & Dynamic Tracker
             if orig_w < orig_h:
                 processed_clip = event_clip  # Clip is already native 9:16 portrait
             elif crop_mode == "track":
                 print(f"[*] Initializing neural tracking array for Segment #{idx}...")
                 tracker = MultiFaceTracker(target_w, orig_w)
-                
+
                 # Fix #4: Capture tracker via default arg to avoid loop closure capture bug.
                 # Without this, all segments would share the last iteration's tracker object.
                 def track_and_crop(get_frame, t, _tracker=tracker):
                     frame = get_frame(t)
                     x1, x2 = _tracker.get_crop_window(frame)
                     return frame[:, x1:x2]
-                
+
                 processed_clip = event_clip.fl(track_and_crop)
             else:
-                if crop_mode == "left": x1, x2 = 0, target_w
-                elif crop_mode == "right": x1, x2 = orig_w - target_w, orig_w
-                else: x1, x2 = (orig_w - target_w) // 2, ((orig_w - target_w) // 2) + target_w
+                if crop_mode == "left":
+                    x1, x2 = 0, target_w
+                elif crop_mode == "right":
+                    x1, x2 = orig_w - target_w, orig_w
+                else:
+                    x1, x2 = (orig_w - target_w) // 2, ((orig_w - target_w) // 2) + target_w
                 processed_clip = event_clip.crop(x1=x1, y1=0, x2=x2, y2=orig_h)
-            
+
             # Digital Scale Punch-In Zoom Module
             if zoom_factor > 1.0:
                 scaled = processed_clip.resize(zoom_factor)
                 sw, sh = scaled.size
-                processed_clip = scaled.crop(x1=(sw-target_w)//2, y1=(sh-orig_h)//2, 
+                processed_clip = scaled.crop(x1=(sw-target_w)//2, y1=(sh-orig_h)//2,
                                              x2=((sw-target_w)//2)+target_w, y2=((sh-orig_h)//2)+orig_h)
-            
+
             compiled_event_clips.append(processed_clip)
 
         if not compiled_event_clips:
@@ -750,20 +757,20 @@ def run_production_clipper(json_data, on_clip_completed=None, on_progress=None):
 
         text_safe_width = target_w - 80
         caption_baseline_y = int(orig_h * 0.58) # Safely clears mobile device interaction icons
-        
+
         for phrase in grouped_phrases:
             phrase_text = " ".join([w["text"] for w in phrase])
             p_start = phrase[0]["start"]
             p_end = phrase[-1]["end"]
-            
+
             kinetic_layers = create_kinetic_caption(phrase_text, p_start, (p_end - p_start), text_safe_width, caption_baseline_y, style_config)
             subtitle_clips.extend(kinetic_layers)
-            
+
         # Final Audio Compositing with BGM & Ducking
         print("[*] Mastering final audio mix (Ducking BGM to 12%)...")
         primary_audio = joined_track.audio
         final_audio = primary_audio
-        
+
         if bgm_path:
             try:
                 bgm_clip = AudioFileClip(bgm_path).volumex(0.12)
@@ -816,14 +823,14 @@ def fallback_full_transcription(video_url, job_id):
         download_selective_range(video_url, dummy_out, 0, 1)
         if os.path.exists(dummy_out):
             os.remove(dummy_out)
-            
+
     if not os.path.exists(full_video_path):
         print("[-] Failed to cache full video for fallback transcription.")
         return None
-        
+
     temp_audio = get_data_path("temp", f"temp_audio_full_{job_id}.wav")
     print(f"[*] Extracting full audio track to {temp_audio}...")
-    
+
     # Extract 16kHz mono audio for optimized Whisper processing
     cmd = [
         "ffmpeg", "-y",
@@ -851,7 +858,7 @@ def fallback_full_transcription(video_url, job_id):
         "ab marketing aur distribution pe focus karna hai. Kya chal raha hai? All good, "
         "everything is fully transparent."
     )
-    
+
     print("[*] Starting Whisper transcription on full audio...")
     try:
         result = model.transcribe(temp_audio, initial_prompt=hinglish_prompt, temperature=0.0)
@@ -863,7 +870,7 @@ def fallback_full_transcription(video_url, job_id):
         if os.path.exists(temp_audio):
             print(f"[*] Cleaning up temporary audio: {temp_audio}")
             os.remove(temp_audio)
-    
+
     return transcript
 
 # ==============================================================================
@@ -871,14 +878,14 @@ def fallback_full_transcription(video_url, job_id):
 # ==============================================================================
 if __name__ == "__main__":
     CONFIG_FILE = "clips.json"
-    
+
     if not os.path.exists(CONFIG_FILE):
         print(f"[-] Structural Error: Ingestion payload target file missing: '{CONFIG_FILE}'")
         sys.exit(1)
-        
+
     print(f"[+] Operational data maps online. Running workflow arrays from {CONFIG_FILE}...")
     with open(CONFIG_FILE, "r", encoding="utf-8") as file:
         json_payload = json.load(file)
-        
+
     run_production_clipper(json_payload)
     print("\n[+] SUCCESS: Automation process complete! All assets saved seamlessly to directory paths.")

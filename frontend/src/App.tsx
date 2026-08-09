@@ -32,6 +32,22 @@ const API_BASE = (window.location.port === '5173' || window.location.origin.incl
   ? 'http://127.0.0.1:8000'
   : window.location.origin;
 
+declare global {
+  interface Window {
+    /** Injected by the Tauri webview; absent when running in a plain browser. */
+    __TAURI_INTERNALS__?: unknown;
+  }
+}
+
+/** Pull a human-readable message out of an unknown thrown value. */
+const errorMessage = (err: unknown): string => {
+  if (axios.isAxiosError(err)) {
+    const detail = (err.response?.data as { detail?: string } | undefined)?.detail;
+    return detail ?? err.message;
+  }
+  return err instanceof Error ? err.message : String(err);
+};
+
 const Logo = () => (
   <div className="relative group">
     <motion.div 
@@ -165,7 +181,7 @@ const App: React.FC = () => {
   useEffect(() => {
     let unlistenFn: (() => void) | null = null;
     const startup = async () => {
-      const isTauri = (window as any).__TAURI_INTERNALS__ !== undefined;
+      const isTauri = window.__TAURI_INTERNALS__ !== undefined;
       if (!isTauri) {
         setIsInitializing(false);
         return;
@@ -194,10 +210,10 @@ const App: React.FC = () => {
         let retries = 0;
         while (retries < 10) {
           try { await axios.get(`${API_BASE}/jobs`); break; } 
-          catch (e) { await new Promise(r => setTimeout(r, 1000)); retries++; }
+          catch { await new Promise(r => setTimeout(r, 1000)); retries++; }
         }
         setIsInitializing(false);
-      } catch (err: any) { setInitProgress(`Factory Fault: ${err}`); }
+      } catch (err) { setInitProgress(`Factory Fault: ${errorMessage(err)}`); }
     };
     startup();
     return () => {
@@ -281,8 +297,8 @@ const App: React.FC = () => {
       localStorage.setItem('ai_models_cache', JSON.stringify(newCache));
       if (provider === targetProvider && models.length > 0) setSelectedModel(models[0]);
       setStatusMsg(`${models.length} models synced successfully.`);
-    } catch (err: any) {
-      alert(`Failed to fetch models: ${err.response?.data?.detail || err.message}`);
+    } catch (err) {
+      alert(`Failed to fetch models: ${errorMessage(err)}`);
     }
   };
 
@@ -295,7 +311,7 @@ const App: React.FC = () => {
     const activeKey = keys[provider] || keys[`${provider}_url`];
     if (!activeKey && !['ollama', 'lm_studio'].includes(provider)) return alert(`Please set your ${provider} API Key in Settings.`);
     
-    let urls = isBatchMode 
+    const urls = isBatchMode 
       ? batchUrls.split('\n').map(u => u.trim()).filter(u => u !== '')
       : [url.trim()].filter(u => u !== '');
 
@@ -374,9 +390,9 @@ const App: React.FC = () => {
 
         await axios.post(`${API_BASE}/process`, orchestration);
         
-      } catch (err: any) {
+      } catch (err) {
         console.error(err);
-        setStatusMsg(`Error: ${err.response?.data?.detail || err.message}`);
+        setStatusMsg(`Error: ${errorMessage(err)}`);
       }
     }
 
@@ -852,9 +868,12 @@ const App: React.FC = () => {
 
       <AnimatePresence>
         {activePreviewVideo && (
-          <CinemaPlayerModal 
-            video={activePreviewVideo} 
-            onClose={() => setActivePreviewVideo(null)} 
+          <CinemaPlayerModal
+            // Remounting on a new clip resets isPlaying/isCopied, which an
+            // effect used to do by calling setState during render commit.
+            key={activePreviewVideo.videoUrl}
+            video={activePreviewVideo}
+            onClose={() => setActivePreviewVideo(null)}
           />
         )}
       </AnimatePresence>
@@ -979,43 +998,36 @@ const FullVideoRepurposeModal: React.FC<FullVideoRepurposeModalProps> = ({
   const [directive, setDirective] = useState('');
   const [isCopied, setIsCopied] = useState(false);
 
+  // Load any previously generated drafts for this job. Defined inside the
+  // effect: it has no other caller, and hoisting it out meant referencing it
+  // before its declaration and leaving it out of the dependency list.
+  const jobId = job?.job_id;
   useEffect(() => {
-    if (job) {
-      loadCachedData();
-    }
-  }, [job]);
+    if (!jobId) return;
+    let cancelled = false;
 
-  const loadCachedData = async () => {
-    if (!job) return;
-    setIsLoading(true);
-    setError('');
-    try {
-      const tweetsUrl = `${API_BASE}/videos/Job_${job.job_id}_full_tweets.json`;
-      const mediumUrl = `${API_BASE}/videos/Job_${job.job_id}_full_medium.md`;
+    const loadCachedData = async () => {
+      setIsLoading(true);
+      setError('');
+      try {
+        const [tweetsRes, mediumRes] = await Promise.allSettled([
+          axios.get<{ tweets?: string[] }>(`${API_BASE}/videos/Job_${jobId}_full_tweets.json`),
+          axios.get<string>(`${API_BASE}/videos/Job_${jobId}_full_medium.md`)
+        ]);
+        if (cancelled) return;
 
-      const [tweetsRes, mediumRes] = await Promise.allSettled([
-        axios.get(tweetsUrl),
-        axios.get(mediumUrl)
-      ]);
-
-      if (tweetsRes.status === 'fulfilled') {
-        setTweets(tweetsRes.value.data.tweets || []);
-      } else {
-        setTweets([]);
+        setTweets(tweetsRes.status === 'fulfilled' ? (tweetsRes.value.data.tweets ?? []) : []);
+        setArticle(mediumRes.status === 'fulfilled' ? mediumRes.value.data : '');
+      } catch (e) {
+        console.error("Cache load failed", e);
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
+    };
 
-      if (mediumRes.status === 'fulfilled') {
-        setArticle(mediumRes.value.data);
-      } else {
-        setArticle('');
-      }
-
-      setIsLoading(false);
-    } catch (e) {
-      console.error("Cache load failed", e);
-      setIsLoading(false);
-    }
-  };
+    loadCachedData();
+    return () => { cancelled = true; };
+  }, [jobId]);
 
   const handleRepurpose = async (customDirective: string = '') => {
     if (!job) return;
@@ -1072,9 +1084,9 @@ const FullVideoRepurposeModal: React.FC<FullVideoRepurposeModalProps> = ({
       setTweets(res.data.tweets || []);
       setArticle(res.data.article || '');
       setDirective('');
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      setError(err.response?.data?.detail || err.message);
+      setError(errorMessage(err));
     } finally {
       clearInterval(stageInterval);
       setIsProcessing(false);
@@ -1340,13 +1352,6 @@ const CinemaPlayerModal: React.FC<CinemaPlayerModalProps> = ({ video, onClose })
   const [isCopied, setIsCopied] = useState(false);
   const videoRef = React.useRef<HTMLVideoElement>(null);
 
-  useEffect(() => {
-    if (video) {
-      setIsPlaying(true);
-      setIsCopied(false);
-    }
-  }, [video]);
-
   if (!video) return null;
 
   const handlePlayPause = () => {
@@ -1535,18 +1540,22 @@ const JobCard: React.FC<{
   const videoUrl = clipVideoUrl(clip);
   const [elapsed, setElapsed] = useState(0);
   const status = clip.status || job.status;
+  const isProcessing = status === 'processing' || (job.status === 'processing' && !clip.status);
 
+  // Elapsed time is measured from a start timestamp rather than accumulated by
+  // the tick, so a throttled background tab cannot make the counter drift.
   useEffect(() => {
-    let interval: any;
-    if (status === 'processing' || (job.status === 'processing' && !clip.status)) {
-      interval = setInterval(() => {
-        setElapsed(prev => prev + 1);
-      }, 1000);
-    } else {
+    if (!isProcessing) return;
+    const startedAt = Date.now();
+    const interval = setInterval(
+      () => setElapsed(Math.floor((Date.now() - startedAt) / 1000)),
+      1000
+    );
+    return () => {
+      clearInterval(interval);
       setElapsed(0);
-    }
-    return () => clearInterval(interval);
-  }, [status, job.status]);
+    };
+  }, [isProcessing]);
 
   return (
     <motion.div layout initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9 }} className="group">
@@ -1589,7 +1598,7 @@ const JobCard: React.FC<{
               </div>
               <p className="text-[9px] font-black uppercase tracking-[0.4em] text-white/40 mb-3">{status === 'failed' ? 'Engine Fault' : status}</p>
               
-              {status === 'processing' || (job.status === 'processing' && !clip.status) ? (
+              {isProcessing ? (
                 <ProcessingPhaseTracker elapsedSeconds={elapsed} progress={clip.progress} />
               ) : status === 'failed' ? (
                 <div className="text-[8.5px] text-red-400 bg-red-500/10 border border-red-500/25 px-4.5 py-3 rounded-2xl font-bold leading-relaxed max-w-[220px] break-words">

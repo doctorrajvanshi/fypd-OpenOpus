@@ -40,11 +40,11 @@ class StreamToLogger:
     def __init__(self, logger, log_level):
         self.logger = logger
         self.log_level = log_level
-        
+
     def write(self, buf):
         for line in buf.rstrip().splitlines():
             self.logger.log(self.log_level, line.rstrip())
-            
+
     def flush(self):
         pass
 
@@ -159,7 +159,7 @@ class ProcessRequest(BaseModel):
     fb_access_token: Optional[str] = None
     fb_page_id: Optional[str] = None
     ngrok_token: Optional[str] = None
-    
+
     # Dual-model Content Repurposing configurations
     auto_repurpose: Optional[bool] = False
     twitter_provider: Optional[str] = None
@@ -174,19 +174,19 @@ class ProcessRequest(BaseModel):
 class FullRepurposeRequest(BaseModel):
     job_id: str
     video_url: str
-    
+
     # Twitter Model Config
     twitter_provider: str
     twitter_model: str
     twitter_key: str
     twitter_base_url: Optional[str] = None
-    
+
     # Medium Model Config
     medium_provider: str
     medium_model: str
     medium_key: str
     medium_base_url: Optional[str] = None
-    
+
     directive: Optional[str] = None
 
 def fetch_youtube_transcript(video_url: str, job_id: str) -> str:
@@ -207,7 +207,7 @@ def fetch_youtube_transcript(video_url: str, job_id: str) -> str:
         "--output", output_template,
         video_url
     ]
-    
+
     sub_files = []
     try:
         print(f"[*] Extracting YouTube subtitles for {video_url}...")
@@ -238,13 +238,13 @@ def fetch_youtube_transcript(video_url: str, job_id: str) -> str:
             line = re.sub(r"<[^>]+>", "", line)
             if line:
                 clean_lines.append(line)
-        
+
         # Deduplicate consecutive identical lines
         dedup_lines = []
         for line in clean_lines:
             if not dedup_lines or dedup_lines[-1] != line:
                 dedup_lines.append(line)
-                
+
         return " ".join(dedup_lines)
 
     except Exception as e:
@@ -488,7 +488,7 @@ async def background_worker():
         job_id, job_data = await job_queue.get()
         jobs[job_id]["status"] = "processing"
         print(f"[*] Processing Job: {job_id}")
-        
+
         try:
             # Execute blocking CPU-heavy task in a thread pool
             await asyncio.to_thread(run_clipper_sync, job_id, job_data)
@@ -593,9 +593,9 @@ async def orchestrate_ai(request: OrchestrateRequest):
             max_tokens=8000,
             **extra_kwargs
         )
-        
+
         content = response.choices[0].message.content
-        
+
         # Robust Regex JSON Extraction (Handles Markdown and conversational filler)
         match = re.search(r"\{.*\}", content, re.DOTALL)
         if match:
@@ -626,8 +626,10 @@ async def fetch_provider_models(request: FetchModelsRequest):
     try:
         # For Local providers, we assume OpenAI compatibility
         url = request.base_url
-        if request.provider == "ollama" and not url: url = "http://localhost:11434/v1"
-        if request.provider == "lm_studio" and not url: url = "http://localhost:1234/v1"
+        if request.provider == "ollama" and not url:
+            url = "http://localhost:11434/v1"
+        if request.provider == "lm_studio" and not url:
+            url = "http://localhost:1234/v1"
 
         if request.provider in ["ollama", "lm_studio"]:
             return [m["id"] for m in _get(f"{url}/models").get("data", [])]
@@ -668,7 +670,7 @@ async def tiktok_login():
     """Launches a visible browser for the user to log in to TikTok manually"""
     from playwright.sync_api import sync_playwright
     import threading
-    
+
     def launch_browser():
         with sync_playwright() as p:
             # Persistent context to save cookies (same absolute profile the
@@ -684,11 +686,13 @@ async def tiktok_login():
             # Wait for user to close browser
             while True:
                 try:
-                    if not browser.pages: break
+                    if not browser.pages:
+                        break
                     time.sleep(1)
-                except: break
+                except Exception:
+                    break
             print("[+] TikTok Session Saved.")
-    
+
     threading.Thread(target=launch_browser).start()
     return {"status": "Login window launched. Please check your desktop."}
 
