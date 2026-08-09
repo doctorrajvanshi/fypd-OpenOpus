@@ -61,14 +61,26 @@ playwright install chromium
 *Note: To build the standalone Desktop App, we use a fully automated GitHub Actions pipeline with Tauri. Just push a `v*` tag to trigger the cloud release.*
 
 ### 3. Configuration & Environment Variables
-Copy the `.env.example` file to `.env` and set the path to your ImageMagick executable:
+Copy the `.env.example` file to `.env`:
 ```bash
 cp .env.example .env
 ```
-Open `.env` and configure:
+
+fypd locates ImageMagick automatically, checking (in order) `IMAGEMAGICK_BINARY`,
+the app data `bin/` folder, the folder next to the app, your `PATH`, and any
+versioned `ImageMagick-*` install under Program Files. Each candidate is executed
+before being accepted, so a partially-installed copy is skipped rather than
+silently used.
+
+Only set this if auto-detection fails — the dashboard tells you when it does:
 ```env
 IMAGEMAGICK_BINARY=C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe
 ```
+
+> **Troubleshooting captions.** If the dashboard shows a red *Setup Required*
+> banner mentioning ImageMagick, reinstall it with the **"Install legacy
+> utilities"** option enabled, then restart fypd. You can confirm what the
+> backend resolved at any time via `http://127.0.0.1:8000/health`.
 
 ---
 

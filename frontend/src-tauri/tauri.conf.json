@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "fypd",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "identifier": "com.fypd.factory",
   "build": {
     "frontendDist": "../../dist_frontend",
@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' asset: data: blob:; media-src 'self' blob: http://127.0.0.1:8000 http://localhost:8000; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:8000 http://localhost:8000; style-src 'self' 'unsafe-inline'; script-src 'self'"
     }
   },
   "plugins": {
@@ -38,7 +38,9 @@
       "../../app_server.py": "app_server.py",
       "../../viral_clipper.py": "viral_clipper.py",
       "../../social_publisher.py": "social_publisher.py",
+      "../../fypd_core.py": "fypd_core.py",
       "../../requirements.txt": "requirements.txt",
+      "../../blaze_face_short_range.tflite": "blaze_face_short_range.tflite",
       "../../bin/": "bin/"
     },
     "windows": {

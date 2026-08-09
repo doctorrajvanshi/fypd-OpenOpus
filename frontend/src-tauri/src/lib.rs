@@ -12,12 +12,31 @@ struct AppState {
     python_process: Arc<Mutex<Option<Child>>>,
 }
 
+/// Written only after every setup step succeeds.
+const SETUP_MARKER: &str = ".fypd_setup_complete";
+
 #[tauri::command]
 async fn check_factory_status(app: AppHandle) -> Result<bool, String> {
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let env_path = app_dir.join("python_env");
-    let bin_path = app_dir.join("bin").join("magick.exe");
-    Ok(env_path.exists() && bin_path.exists())
+
+    // A marker file, not a directory-existence probe. The old check looked for
+    // bin/magick.exe, which never exists off Windows — so macOS and Linux
+    // rebuilt the venv and reinstalled every dependency on each launch — while
+    // on Windows a setup that died midway still left python_env/ behind and was
+    // treated as complete.
+    Ok(app_dir.join(SETUP_MARKER).exists() && python_exe_path(&app_dir).exists())
+}
+
+/// Path to the interpreter inside the managed virtual environment.
+fn python_exe_path(app_dir: &PathBuf) -> PathBuf {
+    if cfg!(target_os = "windows") {
+        app_dir
+            .join("python_env")
+            .join("Scripts")
+            .join("python.exe")
+    } else {
+        app_dir.join("python_env").join("bin").join("python")
+    }
 }
 
 #[tauri::command]
@@ -41,39 +60,45 @@ async fn initialize_factory(app: AppHandle, window: Window) -> Result<(), String
         return Err("Python 3.10+ is required to run the neural editing engine but was not found in your system PATH. Please download and install Python (and make sure to check the 'Add Python to PATH' option during installation) before launching fypd.".to_string());
     }
 
-    // 1. Extract Bundled Binaries (FFmpeg/ImageMagick)
-    let bin_dest = app_dir.join("bin");
-    if !bin_dest.exists() {
-        fs::create_dir_all(&bin_dest).map_err(|e| e.to_string())?;
-    }
-
-    if !bin_dest.join("magick.exe").exists() {
-        window
-            .emit("setup-progress", "Extracting core rendering binaries...")
-            .unwrap();
-        let resource_bin = app
-            .path()
-            .resolve("bin", BaseDirectory::Resource)
-            .map_err(|e| e.to_string())?;
-
-        #[cfg(target_os = "windows")]
-        {
-            let copy_cmd = format!(
-                "Copy-Item -Path '{}/*' -Destination '{}' -Recurse -Force",
-                resource_bin.to_str().unwrap(),
-                bin_dest.to_str().unwrap()
-            );
-            run_command("powershell", &["-Command", &copy_cmd], &app_dir)?;
+    // 1. Extract Bundled Binaries (FFmpeg/ImageMagick).
+    // Windows only: the bundled bin/ holds Windows PE binaries and DLLs, which
+    // are useless on macOS/Linux where ffmpeg and ImageMagick come from the
+    // system package manager.
+    #[cfg(target_os = "windows")]
+    {
+        let bin_dest = app_dir.join("bin");
+        if !bin_dest.exists() {
+            fs::create_dir_all(&bin_dest).map_err(|e| e.to_string())?;
         }
 
-        #[cfg(not(target_os = "windows"))]
-        {
+        if !bin_dest.join("magick.exe").exists() {
+            window
+                .emit("setup-progress", "Extracting core rendering binaries...")
+                .unwrap();
+            let resource_bin = app
+                .path()
+                .resolve("bin", BaseDirectory::Resource)
+                .map_err(|e| e.to_string())?;
+
             let copy_cmd = format!(
-                "cp -r {}/* {}",
-                resource_bin.to_str().unwrap(),
-                bin_dest.to_str().unwrap()
+                "Copy-Item -LiteralPath '{}\\*' -Destination '{}' -Recurse -Force",
+                resource_bin.to_string_lossy().replace('\'', "''"),
+                bin_dest.to_string_lossy().replace('\'', "''")
             );
-            run_command("sh", &["-c", &copy_cmd], &app_dir)?;
+            run_command(
+                "powershell",
+                &["-NoProfile", "-Command", &copy_cmd],
+                &app_dir,
+            )?;
+
+            if !bin_dest.join("magick.exe").exists() {
+                return Err(
+                    "Failed to extract the bundled ImageMagick binaries. Caption rendering \
+                     needs them — try reinstalling fypd, or install ImageMagick separately \
+                     and add it to your PATH."
+                        .to_string(),
+                );
+            }
         }
     }
 
@@ -133,20 +158,22 @@ async fn initialize_factory(app: AppHandle, window: Window) -> Result<(), String
         &app_dir,
     )?;
 
-    // 5. Warm up Whisper
+    // 5. Warm up Whisper.
+    // Must match WHISPER_MODEL in viral_clipper.py — warming 'small' while the
+    // engine loads 'base' downloaded ~460 MB that nothing ever used, and the
+    // first job then paid for the 'base' download anyway.
     window
         .emit("setup-progress", "Warming up local AI models...")
         .unwrap();
-    let python_env_exe = if cfg!(target_os = "windows") {
-        app_dir.join("python_env").join("Scripts").join("python")
-    } else {
-        app_dir.join("python_env").join("bin").join("python")
-    };
+    let python_env_exe = python_exe_path(&app_dir);
     run_command(
         python_env_exe.to_str().unwrap(),
-        &["-c", "import whisper; whisper.load_model('small')"],
+        &["-c", "import whisper; whisper.load_model('base')"],
         &app_dir,
     )?;
+
+    // Only now is setup genuinely complete.
+    fs::write(app_dir.join(SETUP_MARKER), env!("CARGO_PKG_VERSION")).map_err(|e| e.to_string())?;
 
     window.emit("setup-progress", "Ready").unwrap();
     Ok(())
@@ -168,12 +195,22 @@ fn run_command(cmd: &str, args: &[&str], cwd: &PathBuf) -> Result<(), String> {
 
 #[tauri::command]
 async fn start_factory_server(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // Never spawn a second backend over a live one; the duplicate would fail to
+    // bind port 8000 and die, leaving the UI pointed at whichever won the race.
+    {
+        let mut guard = state.python_process.lock().map_err(|e| e.to_string())?;
+        let still_running = guard
+            .as_mut()
+            .map(|child| matches!(child.try_wait(), Ok(None)))
+            .unwrap_or(false);
+        if still_running {
+            return Ok(());
+        }
+        *guard = None;
+    }
+
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let python_exe = if cfg!(target_os = "windows") {
-        app_dir.join("python_env").join("Scripts").join("python")
-    } else {
-        app_dir.join("python_env").join("bin").join("python")
-    };
+    let python_exe = python_exe_path(&app_dir);
 
     let server_path = app
         .path()
@@ -190,7 +227,7 @@ async fn start_factory_server(app: AppHandle, state: State<'_, AppState>) -> Res
     command.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
     let child = command.spawn().map_err(|e| e.to_string())?;
-    *state.python_process.lock().unwrap() = Some(child);
+    *state.python_process.lock().map_err(|e| e.to_string())? = Some(child);
 
     Ok(())
 }

@@ -6,7 +6,10 @@ import platform
 separator = ';' if platform.system() == 'Windows' else ':'
 add_data = [
     f"dist_frontend{separator}dist_frontend",
-    f"bin{separator}bin"
+    f"bin{separator}bin",
+    # Ship the face tracking model so the first 'track' clip does not have to
+    # download it at runtime.
+    f"blaze_face_short_range.tflite{separator}."
 ]
 
 data_args = []
@@ -34,6 +37,8 @@ PyInstaller.__main__.run([
     '--hidden-import=yt_dlp',
     '--hidden-import=textwrap3',
     '--hidden-import=viral_clipper',
+    '--hidden-import=fypd_core',
+    '--hidden-import=social_publisher',
     '--collect-all=whisper',
     '--collect-all=moviepy',
     '--collect-all=yt_dlp',

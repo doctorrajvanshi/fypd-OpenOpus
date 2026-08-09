@@ -3,6 +3,15 @@ import sys
 import json
 import logging
 
+# --- Load .env before anything reads configuration ---
+# README and .env.example both document these settings, but nothing ever loaded
+# the file, so IMAGEMAGICK_BINARY / HOST / PORT were silently ignored.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv is optional; process environment still applies
+
 # --- Resolve writable data directory ---
 # When launched by Tauri, FYPD_DATA_DIR is injected as an env var.
 # In dev mode (python app_server.py directly), fall back to a user AppData path.
@@ -47,6 +56,7 @@ sys.stdout = StreamToLogger(logging.getLogger('STDOUT'), logging.INFO)
 sys.stderr = StreamToLogger(logging.getLogger('STDERR'), logging.ERROR)
 import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,7 +73,24 @@ from threading import Timer
 from fastapi.responses import FileResponse
 import litellm
 
-app = FastAPI(title="fypd Backend")
+HOST = os.environ.get("HOST", "127.0.0.1")
+PORT = int(os.environ.get("PORT", "8000"))
+
+# Cap the in-memory job store; it previously grew for the lifetime of the process
+# and was returned in full on every dashboard poll.
+MAX_JOBS_RETAINED = 50
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    worker = asyncio.create_task(background_worker())
+    try:
+        yield
+    finally:
+        worker.cancel()
+
+
+app = FastAPI(title="fypd Backend", lifespan=lifespan)
 
 # Global Paths
 def get_resource_path(relative_path):
@@ -81,10 +108,23 @@ FRONTEND_DIR = get_resource_path("dist_frontend")
 jobs = {}
 job_queue = asyncio.Queue()
 
+# This server is unauthenticated and holds the user's API keys, so a wildcard
+# origin let any website they happened to be browsing drive the whole pipeline.
+# Only the dashboard's own origins are allowed.
+ALLOWED_ORIGINS = [
+    f"http://{HOST}:{PORT}",
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "http://127.0.0.1:5173",   # vite dev server
+    "http://localhost:5173",
+    "tauri://localhost",       # packaged desktop webview (macOS/Linux)
+    "http://tauri.localhost",  # packaged desktop webview (Windows)
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -100,7 +140,14 @@ class Clip(BaseModel):
     start_time: str
     end_time: str
     caption: Optional[str] = None
-    timeline: List[ClipTimeline]
+    timeline: List[ClipTimeline] = []
+    # These three drive the visual style, B-roll lookup and background music.
+    # They were absent from the model, so Pydantic dropped them before the
+    # payload ever reached the clipper: every clip rendered as "hormozi" with
+    # no B-roll and no BGM regardless of what the UI or the model selected.
+    style: Optional[str] = None
+    bgm_mood: Optional[str] = None
+    broll_keywords: List[str] = []
 
 class ProcessRequest(BaseModel):
     video_url: str
@@ -144,8 +191,10 @@ class FullRepurposeRequest(BaseModel):
 
 def fetch_youtube_transcript(video_url: str, job_id: str) -> str:
     """Downloads auto-generated YouTube subtitles in VTT/SRT format and strips timestamps to return a clean plain-text transcript."""
-    output_template = os.path.join(OUTPUT_DIR, f"Job_{job_id}_subtitles")
-    
+    # Staged in TEMP_DIR, not OUTPUT_DIR: everything under OUTPUT_DIR is served
+    # over HTTP at /videos, and leftover subtitle files were being published there.
+    output_template = os.path.join(TEMP_DIR, f"Job_{job_id}_subtitles")
+
     # Run yt-dlp to write auto-generated subs, skip video download, in VTT or SRT format
     cmd = [
         sys.executable,
@@ -159,22 +208,23 @@ def fetch_youtube_transcript(video_url: str, job_id: str) -> str:
         video_url
     ]
     
+    sub_files = []
     try:
         print(f"[*] Extracting YouTube subtitles for {video_url}...")
         # Since it skips video download, it should finish in less than 1.5s.
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
-        # Search for downloaded subtitle file in output directory
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+
+        # Search for downloaded subtitle file in the staging directory
         sub_files = glob.glob(f"{output_template}.*")
         if not sub_files:
             raise Exception("No subtitle files downloaded.")
-            
+
         sub_file = sub_files[0]
         print(f"[+] Subtitles downloaded to {sub_file}")
-        
+
         with open(sub_file, "r", encoding="utf-8") as f:
             content = f.read()
-        
+
         # Clean VTT/SRT timestamps and metadata
         clean_lines = []
         for line in content.split("\n"):
@@ -195,118 +245,48 @@ def fetch_youtube_transcript(video_url: str, job_id: str) -> str:
             if not dedup_lines or dedup_lines[-1] != line:
                 dedup_lines.append(line)
                 
-        transcript = " ".join(dedup_lines)
-        
-        # Clean up the downloaded subtitle file so it doesn't clutter outputs
-        try:
-            os.remove(sub_file)
-        except Exception:
-            pass
-            
-        return transcript
-        
+        return " ".join(dedup_lines)
+
     except Exception as e:
         print(f"[-] Failed to fetch subtitles via yt-dlp: {e}")
         return ""
+    finally:
+        # Remove every downloaded language variant, not just the one we parsed.
+        for stale in sub_files or glob.glob(f"{output_template}.*"):
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
 
-# Fix #3: Characters illegal in Windows filenames.
-_ILLEGAL_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|]')
+# Re-exported from the shared core so the server and the renderer can never
+# drift on the filenames they produce (Fix #3: characters illegal on Windows).
+from fypd_core import sanitize_filename  # noqa: E402
 
-def sanitize_filename(name: str) -> str:
-    """Strip characters that are illegal in Windows filenames."""
-    return _ILLEGAL_FILENAME_CHARS.sub('_', name).strip()
+# ==============================================================================
+# CONTENT REPURPOSING (shared by the autonomous pass and the on-demand endpoint)
+# ==============================================================================
+# response_format={"type": "json_object"} is only valid for OpenAI and Gemini.
+# Anthropic handles JSON mode via its own mechanism (managed by litellm
+# internally); passing this kwarg to the Anthropic endpoint raises a 400 error.
+JSON_MODE_PROVIDERS = {"openai", "gemini"}
 
-def run_clipper_sync(job_id: str, data: dict):
-    """Core synchronous processing logic executed in a separate thread"""
-    try:
-        def on_clip_done(clip_id):
-            for c in jobs[job_id]["clips"]:
-                if c["id"] == clip_id:
-                    c["status"] = "completed"
-                    c["progress"] = 100
-                    break
-                    
-        def on_clip_progress(clip_id, progress):
-            for c in jobs[job_id]["clips"]:
-                if c["id"] == clip_id:
-                    c["status"] = "processing"
-                    c["progress"] = progress
-                    break
+def build_model_string(provider: str, model: str) -> str:
+    """LiteLLM model identifier, standardising OpenAI-compatible local proxies."""
+    if provider in ("ollama", "lm_studio"):
+        return f"openai/{model}"
+    return f"{provider}/{model}"
 
-        # Run the clipper with real-time feedback
-        viral_clipper.run_production_clipper(data, on_clip_completed=on_clip_done, on_progress=on_clip_progress)
-        
-        # Post-Processing: Direct Social Upload
-        targets = data.get("publish_targets", [])
-        if targets:
-            print(f"[*] Initiating automated publishing to: {targets}")
-            for clip in data["clips"]:
-                # Fix #3: Sanitize title to remove characters illegal on Windows.
-                safe_title = sanitize_filename(clip['title'])
-                video_path = os.path.join(OUTPUT_DIR, f"SmartShort_{clip['id']}_{safe_title}.mp4")
-                caption = clip.get("caption", "New Short from fypd")
-                
-                if "youtube" in targets:
-                    publisher = social_publisher.YouTubePublisher()
-                    publisher.publish(video_path, caption)
-                
-                if "instagram" in targets:
-                    publisher = social_publisher.InstagramPublisher(
-                        data.get("ig_access_token"), 
-                        data.get("ig_user_id"),
-                        data.get("ngrok_token")
-                    )
-                    publisher.publish(video_path, caption)
+def _directive_block(directive: Optional[str]) -> str:
+    if not directive:
+        return ""
+    return f"\nCUSTOM USER DIRECTIVE: {directive}\nYou MUST satisfy this custom instruction."
 
-                if "tiktok" in targets:
-                    publisher = social_publisher.TikTokPublisher()
-                    publisher.publish(video_path, caption)
-
-                if "facebook" in targets:
-                    publisher = social_publisher.FacebookPublisher(
-                        data.get("fb_access_token"), 
-                        data.get("fb_page_id"),
-                        data.get("ngrok_token")
-                    )
-                    publisher.publish(video_path, caption)
-
-        # Autonomous Full-Video Repurposing Post-Render Pass
-        if data.get("auto_repurpose"):
-            print(f"[*] Autonomous full-video repurposing active for Job {job_id}...")
-            video_url = data.get("video_url")
-
-            # 1. Fetch transcript (Try YouTube subtitles first, fallback to local Whisper)
-            transcript = fetch_youtube_transcript(video_url, job_id)
-            if not transcript:
-                print("[*] YouTube subtitles unavailable. Activating Whisper local fallback...")
-                transcript = viral_clipper.fallback_full_transcription(video_url, job_id)
-
-            if transcript:
-                print("[+] Transcript retrieved successfully. Writing transcript file...")
-                transcript_filename = os.path.join(OUTPUT_DIR, f"Job_{job_id}_full_transcript.txt")
-                with open(transcript_filename, "w", encoding="utf-8") as f:
-                    f.write(transcript)
-                # 2. Generate Twitter Thread
-                try:
-                    t_provider = data.get("twitter_provider")
-                    t_model = data.get("twitter_model")
-                    t_key = data.get("twitter_key") or "local"
-                    t_base_url = data.get("twitter_base_url")
-                    
-                    t_model_string = f"{t_provider}/{t_model}"
-                    if t_provider in ["ollama", "lm_studio"]:
-                        t_model_string = f"openai/{t_model}"
-                    
-                    extra_kwargs = {}
-                    if t_provider in ["openai", "gemini"]:
-                        extra_kwargs["response_format"] = {"type": "json_object"}
-                    
-                    print(f"[*] Auto-generating Twitter thread using {t_model_string}...")
-                    t_prompt = f"""You are an expert ghostwriter and viral growth hacker. 
+def build_twitter_prompt(transcript: str, directive: Optional[str] = None) -> str:
+    return f"""You are an expert ghostwriter and viral growth hacker.
 Based on the following video transcript:
 "{transcript}"
 
-Generate an opinionated, highly engaging, and viral Twitter/X thread (3 to 5 tweets).
+Generate an opinionated, highly engaging, and viral Twitter/X thread (3 to 5 tweets).{_directive_block(directive)}
 
 Guidelines:
 1. The first tweet must be a high-converting hook that grabs attention, states a bold or controversial opinion, and makes the reader want to read the thread.
@@ -323,45 +303,13 @@ Output a JSON object with this exact schema:
         ...
     ]
 }}"""
-                    
-                    t_response = litellm.completion(
-                        model=t_model_string,
-                        messages=[{"role": "user", "content": t_prompt}],
-                        api_key=t_key,
-                        base_url=t_base_url,
-                        max_tokens=2000,
-                        **extra_kwargs
-                    )
-                    t_content = t_response.choices[0].message.content
-                    
-                    # Regex extraction
-                    t_match = re.search(r"\{.*\}", t_content, re.DOTALL)
-                    if t_match:
-                        t_json = json.loads(t_match.group())
-                        tweets_filename = os.path.join(OUTPUT_DIR, f"Job_{job_id}_full_tweets.json")
-                        with open(tweets_filename, "w", encoding="utf-8") as f:
-                            json.dump(t_json, f, indent=4)
-                        print(f"[+] Saved auto-generated tweets to {tweets_filename}")
-                except Exception as e:
-                    print(f"[-] Twitter thread auto-generation failed: {e}")
-                
-                # 3. Generate Medium Article
-                try:
-                    m_provider = data.get("medium_provider")
-                    m_model = data.get("medium_model")
-                    m_key = data.get("medium_key") or "local"
-                    m_base_url = data.get("medium_base_url")
-                    
-                    m_model_string = f"{m_provider}/{m_model}"
-                    if m_provider in ["ollama", "lm_studio"]:
-                        m_model_string = f"openai/{m_model}"
-                    
-                    print(f"[*] Auto-generating Medium article using {m_model_string}...")
-                    m_prompt = f"""You are a professional tech blogger and content editor. 
+
+def build_medium_prompt(transcript: str, directive: Optional[str] = None) -> str:
+    return f"""You are a professional tech blogger and content editor.
 Based on the following video transcript:
 "{transcript}"
 
-Write a high-quality, engaging, and detailed Medium article (300 to 600 words) discussing the core topics of the transcript.
+Write a high-quality, engaging, and detailed Medium article (300 to 600 words) discussing the core topics of the transcript.{_directive_block(directive)}
 
 Guidelines:
 1. Create an eye-catching, SEO-optimized title at the top.
@@ -371,20 +319,150 @@ Guidelines:
 5. Add a compelling conclusion.
 
 Format the output as a beautiful Markdown document."""
-                    
-                    m_response = litellm.completion(
-                        model=m_model_string,
-                        messages=[{"role": "user", "content": m_prompt}],
-                        api_key=m_key,
-                        base_url=m_base_url,
-                        max_tokens=4000
+
+def generate_twitter_thread(job_id, transcript, provider, model, key, base_url, directive=None) -> dict:
+    """Draft a Twitter thread and persist it next to the job's other artifacts."""
+    model_string = build_model_string(provider, model)
+    extra_kwargs = {"response_format": {"type": "json_object"}} if provider in JSON_MODE_PROVIDERS else {}
+
+    print(f"[*] Generating Twitter thread using {model_string}...")
+    response = litellm.completion(
+        model=model_string,
+        messages=[{"role": "user", "content": build_twitter_prompt(transcript, directive)}],
+        api_key=key or "local",
+        base_url=base_url,
+        max_tokens=2000,
+        **extra_kwargs
+    )
+    content = response.choices[0].message.content
+
+    # Robust regex extraction (handles markdown fences and conversational filler)
+    match = re.search(r"\{.*\}", content, re.DOTALL)
+    if not match:
+        raise ValueError("No valid JSON found in Twitter thread response")
+
+    payload = json.loads(match.group())
+    tweets_filename = os.path.join(OUTPUT_DIR, f"Job_{job_id}_full_tweets.json")
+    with open(tweets_filename, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=4)
+    print(f"[+] Saved generated tweets to {tweets_filename}")
+    return payload
+
+def generate_medium_article(job_id, transcript, provider, model, key, base_url, directive=None) -> str:
+    """Draft a Medium article and persist it next to the job's other artifacts."""
+    model_string = build_model_string(provider, model)
+
+    print(f"[*] Generating Medium article using {model_string}...")
+    response = litellm.completion(
+        model=model_string,
+        messages=[{"role": "user", "content": build_medium_prompt(transcript, directive)}],
+        api_key=key or "local",
+        base_url=base_url,
+        max_tokens=4000
+    )
+    content = response.choices[0].message.content
+
+    medium_filename = os.path.join(OUTPUT_DIR, f"Job_{job_id}_full_medium.md")
+    with open(medium_filename, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"[+] Saved generated Medium article to {medium_filename}")
+    return content
+
+def resolve_transcript(video_url: str, job_id: str) -> str:
+    """Return a transcript from cache, YouTube subtitles, or local Whisper."""
+    transcript_filename = os.path.join(OUTPUT_DIR, f"Job_{job_id}_full_transcript.txt")
+    if os.path.exists(transcript_filename):
+        print(f"[*] Found cached full transcript for Job {job_id}...")
+        with open(transcript_filename, "r", encoding="utf-8") as f:
+            return f.read()
+
+    transcript = fetch_youtube_transcript(video_url, job_id)
+    if not transcript:
+        print("[*] YouTube subtitles unavailable. Activating Whisper local fallback...")
+        transcript = viral_clipper.fallback_full_transcription(video_url, job_id)
+
+    if transcript:
+        with open(transcript_filename, "w", encoding="utf-8") as f:
+            f.write(transcript)
+    return transcript or ""
+
+def run_clipper_sync(job_id: str, data: dict):
+    """Core synchronous processing logic executed in a separate thread"""
+    def set_clip(clip_id, **fields):
+        for c in jobs[job_id]["clips"]:
+            if c["id"] == clip_id:
+                c.update(fields)
+                break
+
+    try:
+        def on_clip_done(clip_id, filename=None):
+            # Record the real filename the renderer produced so the dashboard
+            # never has to re-derive it from the (unsanitized) clip title.
+            fields = {"status": "completed", "progress": 100}
+            if filename:
+                fields["filename"] = filename
+            set_clip(clip_id, **fields)
+
+        def on_clip_progress(clip_id, progress):
+            set_clip(clip_id, status="processing", progress=progress)
+
+        # Run the clipper with real-time feedback
+        viral_clipper.run_production_clipper(data, on_clip_completed=on_clip_done, on_progress=on_clip_progress)
+
+        # Post-Processing: Direct Social Upload
+        targets = data.get("publish_targets", [])
+        if targets:
+            print(f"[*] Initiating automated publishing to: {targets}")
+            for clip in data["clips"]:
+                # Fix #3: Sanitize title to remove characters illegal on Windows.
+                safe_title = sanitize_filename(clip['title'])
+                video_path = os.path.join(OUTPUT_DIR, f"SmartShort_{clip['id']}_{safe_title}.mp4")
+                caption = clip.get("caption") or "New Short from fypd"
+
+                if "youtube" in targets:
+                    social_publisher.YouTubePublisher().publish(video_path, caption)
+
+                if "instagram" in targets:
+                    social_publisher.InstagramPublisher(
+                        data.get("ig_access_token"),
+                        data.get("ig_user_id"),
+                        data.get("ngrok_token")
+                    ).publish(video_path, caption)
+
+                if "tiktok" in targets:
+                    social_publisher.TikTokPublisher().publish(video_path, caption)
+
+                if "facebook" in targets:
+                    social_publisher.FacebookPublisher(
+                        data.get("fb_access_token"),
+                        data.get("fb_page_id"),
+                        data.get("ngrok_token")
+                    ).publish(video_path, caption)
+
+        # Autonomous Full-Video Repurposing Post-Render Pass
+        if data.get("auto_repurpose"):
+            print(f"[*] Autonomous full-video repurposing active for Job {job_id}...")
+            transcript = resolve_transcript(data.get("video_url"), job_id)
+
+            if not transcript:
+                print("[-] No transcript available; skipping autonomous repurposing.")
+            else:
+                print("[+] Transcript retrieved successfully.")
+                try:
+                    generate_twitter_thread(
+                        job_id, transcript,
+                        data.get("twitter_provider"), data.get("twitter_model"),
+                        data.get("twitter_key"), data.get("twitter_base_url"),
                     )
-                    m_content = m_response.choices[0].message.content
-                    
-                    medium_filename = os.path.join(OUTPUT_DIR, f"Job_{job_id}_full_medium.md")
-                    with open(medium_filename, "w", encoding="utf-8") as f:
-                        f.write(m_content)
-                    print(f"[+] Saved auto-generated Medium article to {medium_filename}")
+                except Exception as e:
+                    print(f"[-] Twitter thread auto-generation failed: {e}")
+
+                try:
+                    generate_medium_article(
+                        job_id, transcript,
+                        data.get("medium_provider"), data.get("medium_model"),
+                        data.get("medium_key"), data.get("medium_base_url"),
+                    )
                 except Exception as e:
                     print(f"[-] Medium article auto-generation failed: {e}")
 
@@ -394,6 +472,14 @@ Format the output as a beautiful Markdown document."""
         print(f"Error processing job {job_id}: {e}")
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["error"] = str(e)
+        # Mark unfinished clips failed too. The dashboard renders per-clip status
+        # in preference to job status, so leaving them on "processing" left the
+        # cards spinning forever and hid the real error (a missing ImageMagick,
+        # most often) in the log file.
+        for c in jobs[job_id]["clips"]:
+            if c.get("status") != "completed":
+                c["status"] = "failed"
+                c["error"] = str(e)
 
 async def background_worker():
     """Sequentially processes jobs from the queue"""
@@ -403,16 +489,27 @@ async def background_worker():
         jobs[job_id]["status"] = "processing"
         print(f"[*] Processing Job: {job_id}")
         
-        # Execute blocking CPU-heavy task in a thread pool
-        await asyncio.to_thread(run_clipper_sync, job_id, job_data)
-        
-        job_queue.task_done()
-        print(f"[+] Finished Job: {job_id}")
+        try:
+            # Execute blocking CPU-heavy task in a thread pool
+            await asyncio.to_thread(run_clipper_sync, job_id, job_data)
+        except Exception as e:
+            # run_clipper_sync handles its own errors, but a failure to even
+            # dispatch must not silently kill the worker for the whole session.
+            print(f"[-] Worker error on job {job_id}: {e}")
+            jobs[job_id]["status"] = "failed"
+            jobs[job_id]["error"] = str(e)
+        finally:
+            job_queue.task_done()
+            print(f"[+] Finished Job: {job_id}")
 
-@app.on_event("startup")
-async def startup_event():
-    # Start the worker task
-    asyncio.create_task(background_worker())
+@app.get("/health")
+async def health():
+    """Reports external toolchain readiness so the UI can show setup problems."""
+    try:
+        await asyncio.to_thread(viral_clipper.preflight_dependencies)
+        return {"ok": True, "imagemagick": viral_clipper.IMAGEMAGICK_PATH}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 @app.get("/")
 async def serve_ui():
@@ -426,25 +523,42 @@ async def serve_favicon():
         return FileResponse(os.path.join(FRONTEND_DIR, "favicon.svg"))
     return FileResponse(os.path.join(BASE_DIR, "frontend/public/favicon.svg"))
 
+def dump_model(model: BaseModel) -> dict:
+    """Serialize a Pydantic model across v1 and v2."""
+    return model.model_dump() if hasattr(model, "model_dump") else model.dict()
+
+def evict_old_jobs():
+    """Drop the oldest finished jobs once the store exceeds its cap."""
+    if len(jobs) <= MAX_JOBS_RETAINED:
+        return
+    finished = [jid for jid, j in jobs.items() if j.get("status") in ("completed", "failed")]
+    for jid in finished[: len(jobs) - MAX_JOBS_RETAINED]:
+        jobs.pop(jid, None)
+
 @app.post("/process")
 async def process_video(request: ProcessRequest):
+    if not request.clips:
+        raise HTTPException(status_code=400, detail="No clips supplied for processing.")
+
     job_id = str(uuid.uuid4())
-    job_data = request.dict()
-    
+    job_data = dump_model(request)
+
     # Initialize per-clip status tracking for real-time frontend updates
     for clip in job_data["clips"]:
         clip["status"] = "pending"
         clip["progress"] = 0
+        clip["filename"] = f"SmartShort_{clip['id']}_{sanitize_filename(clip['title'])}.mp4"
 
+    evict_old_jobs()
     jobs[job_id] = {
         "id": job_id,
         "status": "queued",
         "video_url": request.video_url,
         "clips": job_data["clips"]
     }
-    
+
     await job_queue.put((job_id, job_data))
-    
+
     return {"job_id": job_id, "status": "queued"}
 
 @app.get("/jobs")
@@ -462,18 +576,12 @@ class OrchestrateRequest(BaseModel):
 async def orchestrate_ai(request: OrchestrateRequest):
     """Universal LLM orchestrator using LiteLLM with Regex JSON extraction"""
     try:
-        model_string = f"{request.provider}/{request.model}"
-        if request.provider in ["ollama", "lm_studio"]:
-            model_string = f"openai/{request.model}" # Standardize local proxies
-            
+        model_string = build_model_string(request.provider, request.model)
+
         print(f"[*] Orchestrating with {model_string}...")
-        
-        # Fix #6: response_format={"type": "json_object"} is only valid for OpenAI and Gemini.
-        # Anthropic handles JSON mode via a system prompt / its own beta header (managed by litellm
-        # internally); passing this kwarg to the Anthropic endpoint raises a 400 error.
-        json_providers = {"openai", "gemini"}
+
         extra_kwargs = {}
-        if request.provider in json_providers:
+        if request.provider in JSON_MODE_PROVIDERS:
             extra_kwargs["response_format"] = {"type": "json_object"}
 
         response = await asyncio.to_thread(
@@ -507,36 +615,48 @@ class FetchModelsRequest(BaseModel):
 @app.post("/models/fetch")
 async def fetch_provider_models(request: FetchModelsRequest):
     """Pings provider endpoints to retrieve available models"""
+    import requests
+
+    def _get(url, **kwargs):
+        kwargs.setdefault("timeout", 30)
+        res = requests.get(url, **kwargs)
+        res.raise_for_status()
+        return res.json()
+
     try:
         # For Local providers, we assume OpenAI compatibility
         url = request.base_url
         if request.provider == "ollama" and not url: url = "http://localhost:11434/v1"
         if request.provider == "lm_studio" and not url: url = "http://localhost:1234/v1"
-        
-        # Use LiteLLM's model_list or direct request
-        # For simplicity and reliability with local providers, we'll use a direct request for those
+
         if request.provider in ["ollama", "lm_studio"]:
-            import requests
-            res = requests.get(f"{url}/models")
-            data = res.json()
-            return [m["id"] for m in data.get("data", [])]
-        
+            return [m["id"] for m in _get(f"{url}/models").get("data", [])]
+
         # For cloud providers, use LiteLLM's mapping or standard endpoints
         # Note: LiteLLM model_list can be heavy, so we'll provide standard fallbacks
         if request.provider == "openai":
-            import requests
-            res = requests.get("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {request.api_key}"})
-            return [m["id"] for m in res.json().get("data", []) if "gpt" in m["id"]]
-        
+            data = _get("https://api.openai.com/v1/models",
+                        headers={"Authorization": f"Bearer {request.api_key}"})
+            return [m["id"] for m in data.get("data", []) if "gpt" in m["id"]]
+
         if request.provider == "gemini":
-            import requests
-            res = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models?key={request.api_key}")
-            return [m["name"].replace("models/", "") for m in res.json().get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
+            # Key passed as a header, not a query string: URLs land in proxy logs
+            # and exception traces, and this one carried the user's API key.
+            data = _get("https://generativelanguage.googleapis.com/v1beta/models",
+                        headers={"x-goog-api-key": request.api_key})
+            return [m["name"].replace("models/", "") for m in data.get("models", [])
+                    if "generateContent" in m.get("supportedGenerationMethods", [])]
+
+        if request.provider == "anthropic":
+            # Previously unhandled: the UI offered Claude, then fell through to
+            # the "default" stub below and every subsequent completion failed.
+            data = _get("https://api.anthropic.com/v1/models",
+                        headers={"x-api-key": request.api_key,
+                                 "anthropic-version": "2023-06-01"})
+            return [m["id"] for m in data.get("data", [])]
 
         if request.provider == "openrouter":
-            import requests
-            res = requests.get("https://openrouter.ai/api/v1/models")
-            return [m["id"] for m in res.json().get("data", [])]
+            return [m["id"] for m in _get("https://openrouter.ai/api/v1/models").get("data", [])]
 
         return ["default"] # Fallback
 
@@ -551,9 +671,10 @@ async def tiktok_login():
     
     def launch_browser():
         with sync_playwright() as p:
-            # Persistent context to save cookies
+            # Persistent context to save cookies (same absolute profile the
+            # publisher reads, rather than a cwd-relative folder).
             browser = p.chromium.launch_persistent_context(
-                "tiktok_session",
+                social_publisher.tiktok_session_dir(),
                 headless=False,
                 args=["--disable-blink-features=AutomationControlled"]
             )
@@ -575,139 +696,35 @@ async def tiktok_login():
 async def repurpose_full_video(request: FullRepurposeRequest):
     """Generates an opinionated Twitter thread and Medium article draft for the complete video."""
     try:
-        # Check if the transcript already exists on disk
-        transcript_filename = os.path.join(OUTPUT_DIR, f"Job_{request.job_id}_full_transcript.txt")
-        
-        if os.path.exists(transcript_filename):
-            print(f"[*] Found cached full transcript for Job {request.job_id}...")
-            with open(transcript_filename, "r", encoding="utf-8") as f:
-                transcript = f.read()
-        else:
-            # Otherwise, harvest subtitles instantly via yt-dlp
-            transcript = fetch_youtube_transcript(request.video_url, request.job_id)
-            if not transcript:
-                import viral_clipper
-                print("[*] YouTube subtitles unavailable. Activating Whisper local fallback...")
-                transcript = viral_clipper.fallback_full_transcription(request.video_url, request.job_id)
-                
-            if not transcript:
-                raise Exception("Could not retrieve subtitles from the video or local fallback. Please ensure the video has audio and is accessible.")
-            
-            # Save the harvested transcript
-            with open(transcript_filename, "w", encoding="utf-8") as f:
-                f.write(transcript)
-        
-        # We will run both the Twitter thread and Medium article generations in a thread pool concurrently.
-        def generate_twitter():
-            t_provider = request.twitter_provider
-            t_model = request.twitter_model
-            t_key = request.twitter_key or "local"
-            t_base_url = request.twitter_base_url
-            
-            t_model_string = f"{t_provider}/{t_model}"
-            if t_provider in ["ollama", "lm_studio"]:
-                t_model_string = f"openai/{t_model}"
-            
-            extra_kwargs = {}
-            if t_provider in ["openai", "gemini"]:
-                extra_kwargs["response_format"] = {"type": "json_object"}
-            
-            directive_prompt = ""
-            if request.directive:
-                directive_prompt = f"\nCUSTOM USER DIRECTIVE: {request.directive}\nYou MUST satisfy this custom instruction."
-            
-            t_prompt = f"""You are an expert ghostwriter and viral growth hacker. 
-Based on the following video transcript:
-"{transcript}"
-
-Generate an opinionated, highly engaging, and viral Twitter/X thread (3 to 5 tweets).{directive_prompt}
-
-Guidelines:
-1. The first tweet must be a high-converting hook that grabs attention, states a bold or controversial opinion, and makes the reader want to read the thread.
-2. Use clean formatting, spacing, and short sentences.
-3. Include relevant emojis sparingly.
-4. Ensure each tweet is under 280 characters.
-5. The last tweet should encourage discussion or summarize the main takeaway.
-
-Output a JSON object with this exact schema:
-{{
-    "tweets": [
-        "Tweet 1 text here...",
-        "Tweet 2 text here...",
-        ...
-    ]
-}}"""
-            response = litellm.completion(
-                model=t_model_string,
-                messages=[{"role": "user", "content": t_prompt}],
-                api_key=t_key,
-                base_url=t_base_url,
-                max_tokens=2000,
-                **extra_kwargs
+        transcript = await asyncio.to_thread(resolve_transcript, request.video_url, request.job_id)
+        if not transcript:
+            raise HTTPException(
+                status_code=422,
+                detail="Could not retrieve subtitles from the video or local fallback. "
+                       "Please ensure the video has audio and is accessible."
             )
-            content = response.choices[0].message.content
-            match = re.search(r"\{.*\}", content, re.DOTALL)
-            if match:
-                t_json = json.loads(match.group())
-                tweets_filename = os.path.join(OUTPUT_DIR, f"Job_{request.job_id}_full_tweets.json")
-                with open(tweets_filename, "w", encoding="utf-8") as f:
-                    json.dump(t_json, f, indent=4)
-                return t_json
-            raise Exception("No valid JSON found in Twitter thread response")
 
-        def generate_medium():
-            m_provider = request.medium_provider
-            m_model = request.medium_model
-            m_key = request.medium_key or "local"
-            m_base_url = request.medium_base_url
-            
-            m_model_string = f"{m_provider}/{m_model}"
-            if m_provider in ["ollama", "lm_studio"]:
-                m_model_string = f"openai/{m_model}"
-            
-            directive_prompt = ""
-            if request.directive:
-                directive_prompt = f"\nCUSTOM USER DIRECTIVE: {request.directive}\nYou MUST satisfy this custom instruction."
-            
-            m_prompt = f"""You are a professional tech blogger and content editor. 
-Based on the following video transcript:
-"{transcript}"
-
-Write a high-quality, engaging, and detailed Medium article (300 to 600 words) discussing the core topics of the transcript.{directive_prompt}
-
-Guidelines:
-1. Create an eye-catching, SEO-optimized title at the top.
-2. Use a structured hierarchy with descriptive H2/H3 subtitles.
-3. Write in an opinionated, authoritative, yet approachable tone.
-4. Break the content into readable paragraphs with bullet points or blockquotes for key takeaways.
-5. Add a compelling conclusion.
-
-Format the output as a beautiful Markdown document."""
-            
-            response = litellm.completion(
-                model=m_model_string,
-                messages=[{"role": "user", "content": m_prompt}],
-                api_key=m_key,
-                base_url=m_base_url,
-                max_tokens=4000
-            )
-            content = response.choices[0].message.content
-            medium_filename = os.path.join(OUTPUT_DIR, f"Job_{request.job_id}_full_medium.md")
-            with open(medium_filename, "w", encoding="utf-8") as f:
-                f.write(content)
-            return content
-
-        # Run both tasks concurrently in separate threads using to_thread
+        # Draft both pieces concurrently; they hit different providers.
         tweets, article = await asyncio.gather(
-            asyncio.to_thread(generate_twitter),
-            asyncio.to_thread(generate_medium)
+            asyncio.to_thread(
+                generate_twitter_thread, request.job_id, transcript,
+                request.twitter_provider, request.twitter_model,
+                request.twitter_key, request.twitter_base_url, request.directive,
+            ),
+            asyncio.to_thread(
+                generate_medium_article, request.job_id, transcript,
+                request.medium_provider, request.medium_model,
+                request.medium_key, request.medium_base_url, request.directive,
+            )
         )
-        
+
         return {
             "tweets": tweets.get("tweets", []),
             "article": article
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[-] Full video repurposing failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -722,9 +739,15 @@ if os.path.exists(FRONTEND_DIR):
 if __name__ == "__main__":
     import uvicorn
     try:
+        # Surface a broken toolchain at startup instead of at first render.
+        try:
+            viral_clipper.preflight_dependencies()
+        except Exception as e:
+            print(f"[-] Dependency check failed: {e}")
+
         # Open the browser to the local server address
-        Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:8000")).start()
-        uvicorn.run(app, host="127.0.0.1", port=8000)
+        Timer(1.5, lambda: webbrowser.open(f"http://{HOST}:{PORT}")).start()
+        uvicorn.run(app, host=HOST, port=PORT)
     except Exception as e:
         with open(CRASH_LOG, "w") as f:
             f.write(f"CRASH REPORT:\n{str(e)}")

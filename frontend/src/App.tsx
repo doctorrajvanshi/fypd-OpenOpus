@@ -74,7 +74,22 @@ interface Clip {
   bgm_mood?: string;
   status?: 'pending' | 'processing' | 'completed' | 'failed';
   progress?: number;
+  /** Actual rendered filename reported by the backend. */
+  filename?: string;
+  error?: string;
 }
+
+/**
+ * Resolve the streaming URL for a rendered clip.
+ * The backend sanitizes titles (stripping \ / : * ? " < > |) before writing the
+ * file, so re-deriving the name from the raw title 404s for any title with
+ * punctuation. Prefer the filename the backend reports, and always encode it.
+ */
+const clipVideoUrl = (clip: Clip): string => {
+  const name = clip.filename
+    ?? `SmartShort_${clip.id}_${clip.title.replace(/[\\/:*?"<>|]/g, '_').trim()}.mp4`;
+  return `${API_BASE}/videos/${encodeURIComponent(name)}`;
+};
 
 interface Job {
   id: string;
@@ -97,6 +112,7 @@ const App: React.FC = () => {
   const [isSettingsOpen, setIsSettingsModalOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'llm' | 'social'>('llm');
   const [statusMsg, setStatusMsg] = useState('');
+  const [setupError, setSetupError] = useState('');
   const [isOrchestrating, setIsOrchestrating] = useState(false);
   const [activePreviewVideo, setActivePreviewVideo] = useState<{
     videoUrl: string;
@@ -189,22 +205,43 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // Fix #8: Only poll actively when there are queued/processing jobs.
+  // Cadence is derived from each response rather than from `jobs` state, so the
+  // effect runs once instead of being torn down and rebuilt on every poll —
+  // depending on `jobs` reset the timer continuously.
   useEffect(() => {
     if (isInitializing) return;
-    // Fix #8: Only poll actively when there are queued/processing jobs.
-    // Use a shorter interval while work is in progress, longer when idle.
-    const hasActiveJobs = Object.values(jobs).some(
-      j => j.status === 'queued' || j.status === 'processing'
-    );
-    const interval = hasActiveJobs ? 3000 : 10000;
-    const poll = setInterval(async () => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      let delay = 10000;
       try {
-        const res = await axios.get(`${API_BASE}/jobs`);
+        const res = await axios.get<Record<string, Job>>(`${API_BASE}/jobs`);
+        if (cancelled) return;
         setJobs(res.data);
-      } catch (e) { console.error("Polling failed"); }
-    }, interval);
-    return () => clearInterval(poll);
-  }, [isInitializing, jobs]);
+        const hasActiveJobs = Object.values(res.data).some(
+          j => j.status === 'queued' || j.status === 'processing'
+        );
+        delay = hasActiveJobs ? 3000 : 10000;
+      } catch {
+        console.error("Polling failed");
+      }
+      if (!cancelled) timer = setTimeout(poll, delay);
+    };
+
+    timer = setTimeout(poll, 0);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [isInitializing]);
+
+  // Surface a broken external toolchain (missing ImageMagick / FFmpeg) up front
+  // instead of letting the first render fail into the log file.
+  useEffect(() => {
+    if (isInitializing) return;
+    axios.get(`${API_BASE}/health`)
+      .then(res => { if (!res.data.ok) setSetupError(res.data.error); })
+      .catch(() => {});
+  }, [isInitializing]);
 
   const saveConfig = () => {
     localStorage.setItem('ai_provider', provider);
@@ -501,6 +538,21 @@ const App: React.FC = () => {
       {/* Main Content / Factory Floor */}
       <main className="flex-1 p-12 overflow-y-auto relative bg-[#050505]">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,0,0.03),transparent_40%)] pointer-events-none" />
+
+        {setupError && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-10 p-6 rounded-3xl bg-red-500/10 border border-red-500/30 flex items-start gap-4 relative z-10"
+          >
+            <Server className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-400">Setup Required</p>
+              <p className="text-[11px] text-red-200/80 leading-relaxed font-medium">{setupError}</p>
+            </div>
+          </motion.div>
+        )}
+
         <header className="mb-16 flex justify-between items-end">
           <div>
             <div className="flex items-center gap-4 mb-2">
@@ -1480,7 +1532,7 @@ const JobCard: React.FC<{
   clip: Clip, 
   onOpenCinema: (url: string, title: string, caption: string, style: string, start: string, end: string, bgmMood?: string) => void 
 }> = ({ job, clip, onOpenCinema }) => {
-  const videoUrl = `${API_BASE}/videos/SmartShort_${clip.id}_${clip.title}.mp4`;
+  const videoUrl = clipVideoUrl(clip);
   const [elapsed, setElapsed] = useState(0);
   const status = clip.status || job.status;
 
@@ -1541,7 +1593,7 @@ const JobCard: React.FC<{
                 <ProcessingPhaseTracker elapsedSeconds={elapsed} progress={clip.progress} />
               ) : status === 'failed' ? (
                 <div className="text-[8.5px] text-red-400 bg-red-500/10 border border-red-500/25 px-4.5 py-3 rounded-2xl font-bold leading-relaxed max-w-[220px] break-words">
-                  {job.error || "An unknown system pipeline exception occurred."}
+                  {clip.error || job.error || "An unknown system pipeline exception occurred."}
                 </div>
               ) : (
                 <p className="text-[8px] text-text-dim uppercase tracking-widest font-black animate-pulse">Waiting in execution queue...</p>
